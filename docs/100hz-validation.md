@@ -58,7 +58,7 @@ OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 BLIS_NUM_THREADS=1 \
 
 普通可达、转腕、单侧和跟踪恢复的末段最大末端误差为 1.87–3.68 mm；接近操作包络的场景为 43.92 mm / 0.1805 rad，接近预设 45 mm / 0.22 rad 阈值。硬限位、速度和原始求解器非法候选为零，跟踪丢失期间无新目标提交，故意超限的 120 次候选均被拒绝。完整参数与结果见 [simulation-100hz.json](validation/simulation-100hz.json)。
 
-## 回归检查
+## 回归检查（骨架路径阶段）
 
 专用 Linux / Python 3.12 环境全套回归：`236 passed, 7 skipped, 130 subtests passed`；包含 10 项独立物理仿真专测。7 项跳过是旧官方 native IK 集成用例，需另备 CasADi/Pinocchio CasADi 支持及官方 `.so`，并显式设置 `VR_RUN_VENDOR_IK_TESTS=1` 才运行；本次未加载这些 native 库或手部 SDK。默认测试收集无需旧版依赖。
 
@@ -68,3 +68,13 @@ OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 BLIS_NUM_THREADS=1 \
 ```
 
 另外通过源码编译检查、启动器参数转发测试与 `git diff --check`。`python run.py test` 的本机 UDP 自测收到 30 个有效包、0 个非法包；合成示例 dry-run 保留 41 帧启动窗口，生成 20 个运动预览命令，未连接机器人。HTML 回放已人工检查播放/暂停、场景切换、末帧拖动和重置视角，浏览器控制台无错误。单元回归通过与完整仿真定时失败分别保留，不把两者混写为全部验收通过。
+
+## VR 手柄空间 IK 扩展
+
+独立 `controller` 入口使用 Unity/OpenXR JSON 位姿，直接映射三维位置与旋转，不需要人体骨架。新增 `solve_cartesian` 的纯 IK 基准使用生产参数（6 次迭代、阻尼 0.08、平滑 1.0、100Hz 对应单步 0.0048rad），5 个场景各 600 帧。p99 最大 2.303ms、单帧最大 3.195ms，3000 帧均低于 10ms；全部硬限位、实测步长、上一命令步长和未控制侧约束违反为零。报告见 [cartesian-ik-benchmark.json](validation/cartesian-ik-benchmark.json)。这是合成反馈下的纯 IK，不包含映射或物理执行。
+
+八个实际协议解码、抓握锚定、完整 mapper、生产发布守卫和独立物理引擎的场景，全部功能与安全判据通过；主机控制计算 p99 最大 6.065ms。普通三轴平移、转腕、单侧、失效恢复和重握场景末段最大末端误差 0.308–0.717mm；接近包络场景为 22.06mm / 0.1057rad。不可达目标只要求安全，实际残差另行保留。重新锚定帧关节目标跳变为零，硬限位/速度/历史违反、非法输入提交和未控制电机目标变更均为零。
+
+包含物理和观察开销的完整仿真中，near_limits p99=10.358ms、clutch_reanchor p99=10.180ms，后者唤醒迟到 p99=1.114ms，超过既定 10ms / 1ms 阈值。因此完整仿真预算和定时判据仍为失败，overall 保持 `false`。详见 [controller-ik.json](validation/controller-ik.json)。参考三轴输入已独立核对；旧 fixture 数值失稳的失败报告与诊断也保留，没有放宽验收阈值。
+
+新增路径后，专用 Linux 环境最终全套回归为 **289 passed, 7 skipped, 178 subtests passed**。默认预览的真实 loopback UDP 测试接收 70 个有效帧、拒绝 1 个非法包、计算 80 次候选，机器人发布次数为零；覆盖松手、重新握把和跟踪失效。源码编译检查通过。Unity 发送器已依据官方 API 审查并检查语法，尚未在实际 Unity 项目、头显、手柄或真机上验证。使用和直接机器人基坐标 API 见 [手柄说明](vr-controller.md)。

@@ -198,6 +198,17 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "robot_command": False,
         "hand_only": False,
     },
+    "controller": {
+        "bind": "0.0.0.0", "udp_port": 15010, "control_rate": 100.0,
+        "control_side": "both", "position_scale": 1.0, "orientation_scale": 1.0,
+        "ik_task": "pose", "max_joint_velocity": 0.48,
+        "max_joint_delta_per_step": 0.06, "max_command_delta_from_baseline": 1.0,
+        "duration": None, "log_rate": 1.0,
+    },
+    "controller_simulation": {
+        "output": "data/controller-simulation", "control_hz": 100.0,
+        "physics_substeps": 4, "duration": 4.0, "max_joint_velocity": 0.48,
+    },
     "simulation": {
         "output": "data/simulation",
         "control_hz": 100.0,
@@ -404,6 +415,30 @@ def parse_args() -> argparse.Namespace:
     test_parser.add_argument("--port", type=int, default=None, help="自测使用的本机 UDP 端口")
     test_parser.add_argument("--output", type=Path, default=None, help="自测输出目录")
 
+    controller_parser = subparsers.add_parser("controller", help="Unity/OpenXR/SteamVR 手柄空间位姿 IK；默认离线理想反馈预览")
+    controller_parser.add_argument("--bind", default=None)
+    controller_parser.add_argument("--udp-port", type=int, default=None)
+    controller_parser.add_argument("--control-side", choices=("left", "right", "both"), default=None)
+    controller_parser.add_argument("--ik-task", choices=("pose", "position_only"), default=None)
+    for field in ("control-rate", "position-scale", "orientation-scale", "max-joint-velocity", "max-joint-delta-per-step", "max-command-delta-from-baseline", "duration", "log-rate"):
+        controller_parser.add_argument("--" + field, type=float, default=None)
+    controller_parser.add_argument("--host", default=None)
+    controller_parser.add_argument("--port", type=int, default=None)
+    modes = controller_parser.add_mutually_exclusive_group()
+    modes.add_argument("--execute", action="store_true", help="读取机器人反馈并发布手臂命令")
+    modes.add_argument("--preview-robot", action="store_true", help="读取机器人反馈，仅预览不发布")
+    controller_parser.add_argument("--initial-q", type=float, nargs=14, default=None)
+
+    controller_simulation_parser = subparsers.add_parser("controller-simulate", help="手柄坐标映射与空间 IK 的独立 URDF 物理仿真")
+    controller_simulation_parser.add_argument("--output", type=Path, default=None)
+    controller_simulation_parser.add_argument("--control-hz", type=float, default=None)
+    controller_simulation_parser.add_argument("--physics-substeps", type=int, default=None)
+    controller_simulation_parser.add_argument("--duration", type=float, default=None)
+    controller_simulation_parser.add_argument("--max-joint-velocity", type=float, default=None)
+    controller_simulation_parser.add_argument("--realtime", action="store_true")
+    controller_simulation_parser.add_argument("--scenario", action="append", choices=("translation_xyz", "wrist_pose", "left_only", "near_limits", "unreachable", "tracking_loss", "clutch_reanchor", "invalid_input"), default=None)
+    controller_simulation_parser.add_argument("--coordinate-system", choices=("mixed", "unity", "openxr"), default="mixed")
+
     simulation_parser = subparsers.add_parser("simulate", help="基于机器人 URDF 的独立 PyBullet IK 仿真，无需 ROS/机器人")
     simulation_parser.add_argument("--output", type=Path, default=None)
     simulation_parser.add_argument("--control-hz", type=float, default=None)
@@ -602,6 +637,20 @@ def apply_config(args: argparse.Namespace) -> argparse.Namespace:
     if command == "test":
         args.port = coalesce(args.port, cfg_get(config, "environment", "self_test_port"))
         args.output = resolve_path(coalesce(args.output, cfg_get(config, "environment", "self_test_output")))
+        return args
+
+    if command == "controller":
+        for name, value in config["controller"].items():
+            setattr(args, name, coalesce(getattr(args, name, None), value))
+        args.host = coalesce(args.host, cfg_get(config, "rosbridge", "host"))
+        args.port = coalesce(args.port, cfg_get(config, "rosbridge", "port"))
+        return args
+
+    if command == "controller-simulate":
+        simulation = config["controller_simulation"]
+        args.output = Path(args.output).expanduser().resolve() if args.output is not None else resolve_path(simulation["output"])
+        for name in ("control_hz", "physics_substeps", "duration", "max_joint_velocity"):
+            setattr(args, name, coalesce(getattr(args, name, None), simulation[name]))
         return args
 
     if command == "simulate":
@@ -904,7 +953,8 @@ def run_teleop(args: argparse.Namespace) -> int:
             "但厂商字段布局尚未验证。为避免生成错误关节命令，实时遥操作已拒绝启动。"
         )
         print(
-            "请先执行: python run_ik.py record --device-mode controller --duration 10"
+            "Unity/OpenXR（含 SteamVR runtime）手柄请使用: python run.py controller。"
+            "如需分析旧二进制协议，可录制: python run.py record --device-mode controller --duration 10"
         )
         return 2
     if not args.skip_check:
@@ -1207,6 +1257,36 @@ def run_combined_calibration(args: argparse.Namespace) -> int:
         candidate_path.unlink(missing_ok=True)
 
 
+def run_controller(args: argparse.Namespace) -> int:
+    entry = SOURCE_DIR / "vr_controller_bridge.py"
+    require_file(entry)
+    command = command_prefix(args) + [str(entry)]
+    for name in (*DEFAULT_CONFIG["controller"], "host", "port"):
+        value = getattr(args, name, None)
+        if value is not None:
+            command.extend(("--" + name.replace("_", "-"), str(value)))
+    for mode in ("execute", "preview_robot"):
+        if getattr(args, mode, False):
+            command.append("--" + mode.replace("_", "-"))
+    if getattr(args, "initial_q", None) is not None:
+        command.extend(("--initial-q", *map(str, args.initial_q)))
+    return run_child(command)
+
+
+def run_controller_simulation(args: argparse.Namespace) -> int:
+    entry = SOURCE_DIR / "teleop_controller_simulation.py"
+    require_file(entry)
+    command = command_prefix(args) + [str(entry), "--output", str(args.output)]
+    for name in ("control_hz", "physics_substeps", "duration", "max_joint_velocity"):
+        command.extend(("--" + name.replace("_", "-"), str(getattr(args, name))))
+    if args.realtime:
+        command.append("--realtime")
+    command.extend(("--coordinate-system", getattr(args, "coordinate_system", "mixed")))
+    for scenario in args.scenario or []:
+        command.extend(("--scenario", scenario))
+    return run_child(command)
+
+
 def run_simulation(args: argparse.Namespace) -> int:
     entry = SOURCE_DIR / "teleop_simulation.py"
     require_file(entry)
@@ -1238,6 +1318,9 @@ def run_compile_check(args: argparse.Namespace) -> int:
         SOURCE_DIR / "teleop_ik_core.py",
         SOURCE_DIR / "teleop_skeleton_retarget.py",
         SOURCE_DIR / "teleop_simulation.py",
+        SOURCE_DIR / "teleop_controller_simulation.py",
+        SOURCE_DIR / "teleop_vr_controller.py",
+        SOURCE_DIR / "vr_controller_bridge.py",
         SOURCE_DIR / "teleop_ik_ubtech_casadi.py",
         SOURCE_DIR / "teleop_ik_types.py",
         SOURCE_DIR / "teleop_mocap_calibration.py",
@@ -1394,6 +1477,12 @@ def make_menu_args(base: argparse.Namespace, command: str, **values: Any) -> arg
             if not hasattr(args, name):
                 setattr(args, name, None)
 
+    if command in {"simulate", "controller", "controller-simulate"}:
+        ensure_none_fields("blas_threads", "host", "port", "initial_q", "output", "control_hz", "physics_substeps", "duration", "profile", "max_joint_velocity", "scenario")
+        args.realtime = bool(getattr(args, "realtime", False))
+        args.execute = bool(getattr(args, "execute", False))
+        args.preview_robot = bool(getattr(args, "preview_robot", False))
+        return apply_config(args)
     if command == "arm-test":
         ensure_none_fields(
             "host",
@@ -1612,6 +1701,8 @@ def print_menu(base: argparse.Namespace) -> None:
     print("4. 启动实时动捕遥操作")
     print("5. 查看最近一次关节角曲线")
     print("6. URDF 离线仿真与 IK 验证（无机器人连接）")
+    print("7. VR 手柄空间位姿 IK（默认离线预览）")
+    print("8. VR 手柄 URDF 物理仿真")
     print("0. 退出")
 
 
@@ -1669,6 +1760,10 @@ def run_interactive_menu(base: argparse.Namespace) -> int:
             code = run_menu_visualize(base)
         elif choice == "6":
             code = run_simulation(make_menu_args(base, "simulate"))
+        elif choice == "7":
+            code = run_controller(make_menu_args(base, "controller"))
+        elif choice == "8":
+            code = run_controller_simulation(make_menu_args(base, "controller-simulate"))
         else:
             print("未知选项。")
             continue
@@ -1687,6 +1782,10 @@ def main() -> int:
         return run_test(args)
     if args.command == "simulate":
         return run_simulation(args)
+    if args.command == "controller":
+        return run_controller(args)
+    if args.command == "controller-simulate":
+        return run_controller_simulation(args)
     if args.command == "visualize":
         return run_visualize(args)
     if args.command == "record":

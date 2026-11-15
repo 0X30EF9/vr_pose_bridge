@@ -1,6 +1,6 @@
 # vr_pose_bridge
 
-将 Formotion G2 的 64 节点实时 UDP 骨架映射到现有机器人双臂，并可通过独立 Revo2 SDK 驱动双手。
+将 Formotion G2 的 64 节点实时 UDP 骨架或 Unity/OpenXR 的 VR 手柄空间位姿映射到现有机器人双臂。骨架路径还可通过独立 Revo2 SDK 驱动双手。
 
 日常入口使用 `skeleton` 模式与纯 Pinocchio `teleop_dls` 后端：读取肩、肘、腕和躯干骨架，用机器人 URDF 与当前关节反馈建立映射。操作者只需双臂自然下垂、静止约 2 秒。无需在机器人侧执行转腕或六方向人工标定；动捕设备自身的佩戴、姿态或传感器校准仍按厂家要求完成。
 
@@ -9,7 +9,7 @@
 - 解析完整 64 节点数据；当前输出范围是双臂 14 轴和可选双手，不是全身机器人控制。头、腿等节点不会自动成为控制输出，默认骨架模式不驱动腰部。
 - 按人体骨段方向和身体局部手部旋转重定向，默认 `position_scale=1.0`、`orientation_scale=1.0`。这些是映射增益，不表示人机关节角一一对应。
 - 机器人 URDF 提供 FK、骨段方向和关节限位。命令仍受关节限位、单步变化、基线范围、反馈新鲜度等约束。
-- Revo2 手部计算和发布分别配置；未安装 SDK 时可用 `--hand-ik-compute false` 仅运行双臂。当前手柄 `controller` 帧布局未验证，不能用于实时遥操作。
+- Revo2 手部计算和发布分别配置；未安装 SDK 时可用 `--hand-ik-compute false` 仅运行双臂。旧 C8FF 二进制手柄帧布局仍未验证；Unity/OpenXR 使用下述独立 JSON 手柄接口。
 
 ## 目录
 
@@ -28,6 +28,7 @@ vr_pose_bridge/
 ├── docs/
 │   ├── bridge.md               # 当前使用说明
 │   ├── simulation.md           # 独立 URDF 物理仿真
+│   ├── vr-controller.md        # Unity/OpenXR 手柄与空间 IK
 │   ├── 100hz-validation.md     # 性能、精度与验证范围
 │   ├── device-guide.md         # 动捕设备原始使用说明
 │   └── legacy-calibration.md   # legacy 高级标定说明
@@ -57,6 +58,25 @@ bash tools/setup_simulation.sh
 ```
 
 环境推荐 Python 3.12（依赖支持范围为 3.11–3.12，已验证 3.12）；PyBullet 没有对应预编译包时需要 C++ 编译工具。仿真以简化几何替代缺失的网格，保留 URDF 运动链与惯性参数，不能据此证明真实环境无碰撞。详细用法见 [仿真说明](docs/simulation.md)，测量数据与实际验证范围见 [100 Hz 验证报告](docs/100hz-validation.md)。
+
+## VR 手柄空间坐标 IK
+
+手柄模式直接映射 6DoF 空间位姿，不需要 64 节点人体骨架。Unity 使用 [VrPoseUdpSender.cs](examples/unity/VrPoseUdpSender.cs) 发送标准 JSON UDP；OpenXR 后端也支持以 SteamVR 为运行时。握住握把时捕获手柄与实测机器人 TCP 零位，随后按相对位置与旋转跟随；松手停发，重新握住时零位移对齐。跟踪失效或超时后需有效松手再重握，安全基线不会随重握扩大。
+
+```bash
+# 默认：UDP 15010，理想反馈离线预览，不连接机器人
+python run.py controller
+# 只映射位置（不锁死腕关节）；默认 pose 同时跟随旋转
+python run.py controller --ik-task position_only
+# 读取实际反馈但不发布
+python run.py controller --preview-robot
+# 显式接入机器人发布
+python run.py controller --execute
+# 独立 URDF 物理验证与交互回放
+python run.py controller-simulate --control-hz 100 --duration 4 --realtime
+```
+
+新接口显式区分 Unity、原生 OpenXR 和机器人坐标，单位为米、四元数为 XYZW。当前仅发布启用侧的手臂，不驱动腰部或手指。安装、Unity 设置、坐标公式、直接机器人基坐标 IK API 和验证范围见 [手柄说明](docs/vr-controller.md)。
 
 ## 离线预览
 

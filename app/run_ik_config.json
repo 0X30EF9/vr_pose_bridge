@@ -166,6 +166,27 @@
     "hand_only": false,
     "robot_command": true
   },
+  "controller": {
+    "bind": "0.0.0.0",
+    "udp_port": 15010,
+    "control_rate": 100.0,
+    "control_side": "both",
+    "position_scale": 1.0,
+    "orientation_scale": 1.0,
+    "ik_task": "pose",
+    "max_joint_velocity": 0.48,
+    "max_joint_delta_per_step": 0.06,
+    "max_command_delta_from_baseline": 1.0,
+    "duration": null,
+    "log_rate": 1.0
+  },
+  "controller_simulation": {
+    "output": "data/controller-simulation",
+    "control_hz": 100.0,
+    "physics_substeps": 4,
+    "duration": 4.0,
+    "max_joint_velocity": 0.48
+  },
   "simulation": {
     "output": "data/simulation",
     "control_hz": 100.0,

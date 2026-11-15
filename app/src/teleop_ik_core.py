@@ -437,6 +437,142 @@ class TeleopArmIK:
         projection = np.eye(3) - np.outer(direction, direction)
         return projection @ (end_jacobian - start_jacobian) / length, direction
 
+    def solve_cartesian(self, ik_input: TeleopIKInput) -> TeleopIKResult:
+        """Bounded Cartesian IK for spatial controllers, without legacy wrist locks.
+
+        Both target transforms are expressed in the reduced model's base frame.
+        Actual feedback seeds each solve; the caller's last accepted command is
+        only a continuity reference. This function neither publishes nor stores
+        a proposed command as accepted state. The waist is never commanded.
+        """
+        if self.model.nq != 14 or self.model.nv != 14:
+            raise ValueError("Cartesian IK requires the fixed-base 14-axis arm model")
+        if self.config.task_mode not in {"pose", "position_only"}:
+            raise ValueError("Cartesian task_mode must be pose or position_only")
+        if self.config.locked_joint_indices or self.config.stabilized_joint_indices or any(
+            value is not None for value in (
+                self.config.stabilized_joint_max_delta, self.config.stabilized_joint_max_deltas,
+                self.config.stabilized_joint_delta_bounds,
+            )
+        ):
+            raise ValueError("Cartesian IK does not support legacy locked/stabilized joint constraints; use an unconstrained Cartesian configuration")
+        sides = selected_control_sides(ik_input.control_side)
+        stamp = float(ik_input.timestamp)
+        if not np.isfinite(stamp):
+            raise ValueError("Cartesian timestamp must be finite")
+        if ik_input.current_waist_position is not None:
+            waist = np.asarray(ik_input.current_waist_position, dtype=float)
+            if waist.shape != () or not np.isfinite(waist):
+                raise ValueError("Cartesian optional waist feedback must be a finite scalar")
+        # Validate even the inactive-side placeholder, then retain private copies.
+        targets = {
+            "left": ensure_cartesian_pose(ik_input.target_pose_l, "left target"),
+            "right": ensure_cartesian_pose(ik_input.target_pose_r, "right target"),
+        }
+        lower, upper = joint_limit_arrays(self.joint_limits, 14)
+        current = strict_bounded_arm_q(ik_input.current_q, lower, upper, "current_q")
+        reference = current.copy() if ik_input.last_q_cmd is None else strict_bounded_arm_q(
+            ik_input.last_q_cmd, lower, upper, "last_q_cmd"
+        )
+        active = np.arange(14) if len(sides) == 2 else np.arange(7) + (0 if sides[0] == "left" else 7)
+        step = self.config.max_joint_delta_per_step
+        output_lower = np.maximum.reduce((lower, current - step, reference - step))
+        output_upper = np.minimum.reduce((upper, current + step, reference + step))
+        if np.any(output_lower[active] > output_upper[active]):
+            raise ValueError("Cartesian feedback and last-command safety bounds do not overlap")
+        pose_mode = self.config.task_mode == "pose"
+        weights = np.array([self.config.position_weight] * 3 + ([self.config.orientation_weight] * 3 if pose_mode else []))
+        if not np.any(weights > 0):
+            raise ValueError("Cartesian task must have a positive active weight")
+        columns = tuple(slice(0, 7) if side == "left" else slice(7, 14) for side in sides)
+        frame_ids = tuple(self.left_frame_id if side == "left" else self.right_frame_id for side in sides)
+        jacobians = np.empty((len(sides), len(weights), 7))
+        errors = np.empty((len(sides), len(weights)))
+        q = current.copy()
+        home = ensure_vector(self.home_q, 14, "home_q")
+        limited = False
+        for iteration in range(self.config.max_iterations):
+            pin.computeJointJacobians(self.model, self.data, q)
+            for arm_index, (side, column, frame_id) in enumerate(zip(sides, columns, frame_ids)):
+                pin.updateFramePlacement(self.model, self.data, frame_id)
+                actual = self.data.oMf[frame_id]
+                jacobian = pin.getFrameJacobian(self.model, self.data, frame_id, pin.ReferenceFrame.LOCAL_WORLD_ALIGNED)
+                jacobians[arm_index] = jacobian[:len(weights), column] * weights[:, None]
+                errors[arm_index, :3] = clip_vector_norm(
+                    targets[side][:3, 3] - actual.translation, self.config.max_position_error
+                ) * self.config.position_weight
+                if pose_mode:
+                    errors[arm_index, 3:] = clip_vector_norm(
+                        pin.log3(targets[side][:3, :3] @ actual.rotation.T), self.config.max_orientation_error
+                    ) * self.config.orientation_weight
+            if float(np.sum(errors * errors)) < 1e-10:
+                break
+            bias = np.asarray([self.config.nullspace_gain * (home[column] - q[column]) for column in columns])
+            try:
+                # Damped null-space posture preference: P = I - J# J.
+                # Solve both RHS together so the preference does not add an
+                # unprojected Cartesian error or require a second factorization.
+                increments = compute_cartesian_increment(jacobians, errors, self.config.damping, bias)
+            except np.linalg.LinAlgError as exc:
+                raise ValueError("Cartesian IK linear solve failed") from exc
+            if not np.all(np.isfinite(increments)):
+                raise ValueError("Cartesian IK produced a nonfinite increment")
+            proposed = q.copy()
+            for arm_index, column in enumerate(columns):
+                proposed[column] += increments[arm_index]
+            limited = limited or bool(np.any(proposed < lower) or np.any(proposed > upper))
+            q = np.clip(proposed, lower, upper)
+        proposed = q.copy()
+        safe_reference = np.clip(reference[active], output_lower[active], output_upper[active])
+        bounded = np.clip(q[active], output_lower[active], output_upper[active])
+        q = current.copy()
+        q[active] = self.config.smoothing_alpha * bounded + (1. - self.config.smoothing_alpha) * safe_reference
+        q[active] = np.clip(q[active], output_lower[active], output_upper[active])
+        limited = limited or not np.array_equal(q[active], proposed[active])
+        # One final FK provides exact, unclipped diagnostics of the actual output.
+        pin.forwardKinematics(self.model, self.data, q)
+        residuals = {}
+        weighted_error_squared = 0.0
+        for side, frame_id in zip(sides, frame_ids):
+            pin.updateFramePlacement(self.model, self.data, frame_id)
+            actual = self.data.oMf[frame_id]
+            position_error = targets[side][:3, 3] - actual.translation
+            orientation_error = pin.log3(targets[side][:3, :3] @ actual.rotation.T)
+            position_norm = float(np.linalg.norm(position_error))
+            orientation_norm = float(np.linalg.norm(orientation_error))
+            if not np.isfinite(position_norm) or not np.isfinite(orientation_norm):
+                raise ValueError("Cartesian residual overflow")
+            residuals[side] = {
+                "position_error_m": position_norm,
+                "orientation_error_rad": orientation_norm,
+            }
+            weighted_error_squared += float(position_error @ position_error) * self.config.position_weight ** 2
+            if pose_mode:
+                weighted_error_squared += float(orientation_error @ orientation_error) * self.config.orientation_weight ** 2
+        weighted_error_norm = float(np.sqrt(weighted_error_squared))
+        if not np.isfinite(weighted_error_norm):
+            raise ValueError("Cartesian weighted residual overflow")
+        converged = weighted_error_norm <= self.config.position_convergence_threshold
+        command = IKCommand(
+            timestamp=stamp, control_side=ik_input.control_side,
+            joint_names=list(self.config.joint_names), motor_ids=list(self.config.motor_ids), positions=q,
+            meta={
+                "solver": "cartesian_arm_dls", "task_mode": self.config.task_mode,
+                "iterations": iteration + 1, "limited": bool(limited),
+                "weighted_error_norm": weighted_error_norm, "error_norm": weighted_error_norm,
+                "convergence_threshold": self.config.position_convergence_threshold,
+                "residual_by_side": residuals,
+                "feedback_command_error": float(np.linalg.norm(current[active] - reference[active])),
+                "joint_limits_source": "urdf" if self.config.joint_limits is None else "urdf_config_intersection",
+                "safety": "urdf_limits+feedback_step+last_command_step",
+            },
+        )
+        return TeleopIKResult(
+            command=command, converged=converged, error_norm=weighted_error_norm,
+            iteration_count=iteration + 1, limited=bool(limited),
+            reason="ok" if converged else "limited" if limited else "iteration_budget",
+        )
+
     def solve(self, ik_input: TeleopIKInput) -> TeleopIKResult:
         """求解单帧遥操作命令。
 
@@ -839,6 +975,23 @@ def compute_joint_space_increment(jacobian: np.ndarray, error: np.ndarray, dampi
     return np.linalg.solve(hessian, transpose @ error[..., None])[..., 0]
 
 
+def compute_cartesian_increment(jacobians: np.ndarray, errors: np.ndarray, damping: float, bias: np.ndarray) -> np.ndarray:
+    """Batch DLS plus the damped null-space projection of a posture preference."""
+    transpose = np.swapaxes(jacobians, -2, -1)
+    if damping == 0.0:
+        return np.asarray([
+            np.linalg.lstsq(jacobian, error, rcond=None)[0] + preference
+            - np.linalg.lstsq(jacobian, jacobian @ preference, rcond=None)[0]
+            for jacobian, error, preference in zip(jacobians, errors, bias)
+        ])
+    hessian = transpose @ jacobians
+    diagonal = np.arange(hessian.shape[-1])
+    regularization = damping * damping
+    hessian[..., diagonal, diagonal] += regularization
+    rhs = transpose @ errors[..., None] + regularization * bias[..., None]
+    return np.linalg.solve(hessian, rhs)[..., 0]
+
+
 def stabilized_joint_increment(
     q: np.ndarray,
     home_q: np.ndarray,
@@ -1011,6 +1164,23 @@ def ensure_rotation(value: np.ndarray, name: str) -> np.ndarray:
     if np.any(np.abs(rotation @ rotation.T - _IDENTITY_3) > _ROTATION_TOLERANCE) or abs(np.linalg.det(rotation) - 1.0) > 1.1e-5:
         raise ValueError(f"{name} 必须是右手正交旋转矩阵")
     return rotation.copy()
+
+
+def strict_bounded_arm_q(value: np.ndarray, lower: np.ndarray, upper: np.ndarray, name: str) -> np.ndarray:
+    values = np.asarray(value, dtype=float)
+    if values.shape != (14,) or not np.all(np.isfinite(values)):
+        raise ValueError(f"{name} must be a finite 14-vector")
+    if np.any(values < lower - 1e-8) or np.any(values > upper + 1e-8):
+        raise ValueError(f"{name} exceeds URDF joint limits")
+    return np.clip(values, lower, upper)
+
+
+def ensure_cartesian_pose(value: np.ndarray, name: str) -> np.ndarray:
+    pose = ensure_pose(value, name).copy()
+    ensure_rotation(pose[:3, :3], name)
+    if np.any(np.abs(pose[3] - np.array([0., 0., 0., 1.])) > 1e-9):
+        raise ValueError(f"{name} must have a homogeneous [0, 0, 0, 1] bottom row")
+    return pose
 
 
 def ensure_pose(value: np.ndarray, name: str) -> np.ndarray:
