@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import replace
+import math
 from typing import Any
 
 import numpy as np
@@ -23,11 +24,11 @@ from teleop_direct_retarget import (
     ensure_arm_q,
     median_home_arms,
     observation_is_safe,
-    relative_direction_target,
+    normalize_vector,
     selected_sides,
     skeleton_observation,
 )
-from teleop_ik_core import TeleopArmIK, clip_to_limits, ensure_rotation, joint_limit_arrays
+from teleop_ik_core import TeleopArmIK, ensure_rotation, joint_limit_arrays
 from teleop_ik_types import IKCommand, TeleopIKConfig
 
 SKELETON_RETARGET_SOURCE = "body_relative_skeleton_dls"
@@ -69,12 +70,13 @@ def validate_skeleton_frame(
 def _body_local_observation(observation: SkeletonObservation) -> SkeletonObservation:
     """Reuse the existing length/jump gates in body coordinates, not world."""
     body = observation.body_frame
+    world_to_body = body.world_to_body
     arms = {
         side: replace(
             arm,
-            shoulder_world=body.vector_to_local(arm.shoulder_world - body.origin),
-            elbow_world=body.vector_to_local(arm.elbow_world - body.origin),
-            wrist_world=body.vector_to_local(arm.wrist_world - body.origin),
+            shoulder_world=world_to_body @ (arm.shoulder_world - body.origin),
+            elbow_world=world_to_body @ (arm.elbow_world - body.origin),
+            wrist_world=world_to_body @ (arm.wrist_world - body.origin),
         )
         for side, arm in observation.arms.items()
     }
@@ -82,7 +84,36 @@ def _body_local_observation(observation: SkeletonObservation) -> SkeletonObserva
 
 
 def _rotation_angle(first: np.ndarray, second: np.ndarray) -> float:
-    return float(np.linalg.norm(Rotation.from_matrix(first @ second.T).as_rotvec()))
+    return float(np.arccos(np.clip((np.trace(first @ second.T) - 1.0) * 0.5, -1.0, 1.0)))
+
+
+def _relative_unit_direction(home: np.ndarray, current: np.ndarray, robot: np.ndarray, scale: float) -> np.ndarray:
+    """Relative-direction mapping for unit vectors already checked by the gates.
+
+    The source observation and alignment normalize these vectors once. Repeating
+    their shape/finite/normalization checks for every target adds no protection.
+    """
+    cross = np.array((home[1] * current[2] - home[2] * current[1],
+                      home[2] * current[0] - home[0] * current[2],
+                      home[0] * current[1] - home[1] * current[0]))
+    sine = math.sqrt(float(cross @ cross))
+    cosine = max(-1.0, min(1.0, float(home @ current)))
+    if sine <= 1e-9:
+        if cosine > 0.0:
+            return robot.copy()
+        seed = np.array([1., 0., 0.]) if abs(home[0]) < .8 else np.array([0., 1., 0.])
+        axis = np.cross(home, seed)
+        axis /= np.linalg.norm(axis)
+        angle = math.pi
+    else:
+        axis = cross / sine
+        angle = math.atan2(sine, cosine)
+    sine, cosine = math.sin(angle * scale), math.cos(angle * scale)
+    cross_robot = np.array((axis[1] * robot[2] - axis[2] * robot[1],
+                            axis[2] * robot[0] - axis[0] * robot[2],
+                            axis[0] * robot[1] - axis[1] * robot[0]))
+    result = robot * cosine + cross_robot * sine + axis * float(axis @ robot) * (1.0 - cosine)
+    return result / math.sqrt(float(result @ result))
 
 
 class SkeletonRetargeter:
@@ -115,10 +146,11 @@ class SkeletonRetargeter:
         ))
         self.aligned = False
 
-    def _bounded_q(self, values: np.ndarray, name: str) -> np.ndarray:
+    def _bounded_q(self, values: np.ndarray, name: str, bounds=None) -> np.ndarray:
         q = ensure_arm_q(values, name).copy()
-        bounded = clip_to_limits(q, self.solver.joint_limits)
-        if not np.allclose(q, bounded, atol=1e-8, rtol=0.0):
+        lower, upper = joint_limit_arrays(self.solver.joint_limits, 14) if bounds is None else bounds
+        bounded = np.clip(q, lower, upper)
+        if np.any(np.abs(q - bounded) > 1e-8):
             raise ValueError(f"{name} exceeds URDF joint limits")
         return bounded
 
@@ -157,7 +189,9 @@ class SkeletonRetargeter:
             for side, pose in zip(("left", "right"), robot_poses)
         }
         self._robot_home_directions = {
-            side: self.solver.segment_directions(baseline, side) for side in ("left", "right")
+            side: tuple(normalize_vector(direction, f"{side} robot home direction")
+                        for direction in self.solver.segment_directions(baseline, side))
+            for side in ("left", "right")
         }
         self._baseline_q = baseline
         self._home_arms = home_arms
@@ -181,8 +215,9 @@ class SkeletonRetargeter:
     ) -> IKCommand:
         if not self.aligned:
             raise ValueError("skeleton retargeter is not aligned")
-        current = self._bounded_q(current_q, "current_q")
-        reference = current if last_q_cmd is None else self._bounded_q(last_q_cmd, "last_q_cmd")
+        bounds = joint_limit_arrays(self.solver.joint_limits, 14)
+        current = self._bounded_q(current_q, "current_q", bounds)
+        reference = current if last_q_cmd is None else self._bounded_q(last_q_cmd, "last_q_cmd", bounds)
         stamp = float(frame.get("receive_time", 0.0) if timestamp is None else timestamp)
         if not np.isfinite(stamp):
             raise ValueError("timestamp must be finite")
@@ -198,8 +233,8 @@ class SkeletonRetargeter:
                 raise ValueError(f"{side}_hand_orientation_jump")
         targets = {
             side: (
-                relative_direction_target(self._home_arms[side].upper_direction_local, observation.arms[side].upper_direction_local, self._robot_home_directions[side][0], self.config.position_scale),
-                relative_direction_target(self._home_arms[side].forearm_direction_local, observation.arms[side].forearm_direction_local, self._robot_home_directions[side][1], self.config.position_scale),
+                _relative_unit_direction(self._home_arms[side].upper_direction_local, observation.arms[side].upper_direction_local, self._robot_home_directions[side][0], self.config.position_scale),
+                _relative_unit_direction(self._home_arms[side].forearm_direction_local, observation.arms[side].forearm_direction_local, self._robot_home_directions[side][1], self.config.position_scale),
             )
             for side in selected_sides(self.config.control_side)
         }
@@ -232,15 +267,27 @@ class SkeletonRetargeter:
             damping=self.config.direction_damping,
         )
         proposed = ensure_arm_q(solved_q, "solved_q")
-        safe_q = self._safe_command(proposed, current, reference)
-        actual_poses = dict(zip(("left", "right"), self.solver.end_effector_poses(safe_q)))
-        final_residuals = {}
-        for side in targets:
-            upper, forearm = self.solver.segment_directions(safe_q, side)
-            final_residuals[side] = {
-                "upper_angle_rad": direction_angle(upper, targets[side][0]),
-                "forearm_angle_rad": direction_angle(forearm, targets[side][1]),
-                "orientation_angle_rad": _rotation_angle(orientations[side], actual_poses[side][:3, :3]),
+        safe_q = self._safe_command(proposed, current, reference, bounds)
+        unchanged = np.array_equal(safe_q, proposed)
+        if unchanged and "residual_by_side" in solver_meta:
+            final_residuals = solver_meta["residual_by_side"]
+        else:
+            # A baseline/feedback clamp changes the final pose. Recompute all
+            # diagnostics in one FK; custom legacy solvers retain the old API.
+            if hasattr(self.solver, "segment_state"):
+                state = self.solver.segment_state(safe_q, self.config.control_side)
+            else:
+                poses = dict(zip(("left", "right"), self.solver.end_effector_poses(safe_q)))
+                state = {}
+                for side in targets:
+                    upper, forearm = self.solver.segment_directions(safe_q, side)
+                    state[side] = {"upper": upper, "forearm": forearm, "orientation": poses[side][:3, :3]}
+            final_residuals = {
+                side: {
+                    "upper_angle_rad": direction_angle(state[side]["upper"], targets[side][0]),
+                    "forearm_angle_rad": direction_angle(state[side]["forearm"], targets[side][1]),
+                    "orientation_angle_rad": _rotation_angle(orientations[side], state[side]["orientation"]),
+                } for side in targets
             }
         # Observation history is tracking quality state, not a submitted command.
         self._previous_observation = local_observation
@@ -258,7 +305,7 @@ class SkeletonRetargeter:
                 "source_by_side": {side: SKELETON_RETARGET_SOURCE for side in targets},
                 "calibrated": True,
                 "quality": "ok",
-                "limited": bool(solver_meta.get("limited", False) or not np.allclose(safe_q, proposed, atol=1e-9)),
+                "limited": bool(solver_meta.get("limited", False) or not unchanged),
                 "solver_meta": solver_meta,
                 "target_directions": {side: {"upper": value[0], "forearm": value[1]} for side, value in targets.items()},
                 "target_orientations": orientations,
@@ -267,8 +314,8 @@ class SkeletonRetargeter:
             },
         )
 
-    def _safe_command(self, proposed: np.ndarray, current: np.ndarray, reference: np.ndarray) -> np.ndarray:
-        lower, upper = joint_limit_arrays(self.solver.joint_limits, 14)
+    def _safe_command(self, proposed: np.ndarray, current: np.ndarray, reference: np.ndarray, bounds=None) -> np.ndarray:
+        lower, upper = joint_limit_arrays(self.solver.joint_limits, 14) if bounds is None else bounds
         # The legacy direct envelope freezes wrists near +/-0.12 rad. Automatic
         # orientation mapping instead uses the common baseline bound on all axes.
         envelope = float(self.config.max_command_delta_from_baseline)

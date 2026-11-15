@@ -17,7 +17,7 @@ from scipy.spatial.transform import Rotation as R
 
 from teleop_ik_adapters import build_rosbridge_motor_message, build_rosbridge_waist_message
 from teleop_ik_types import IKCommand
-from teleop_control_safety import feedback_is_fresh, require_fresh_feedback
+from teleop_control_safety import command_time_step, feedback_is_fresh, joint_velocity_limits_from_urdf, require_fresh_feedback
 from teleop_joint_schema import arm_joint_limits_from_urdf, arm_positions_from_status
 from teleop_direct_retarget import (
     DirectRetargeter,
@@ -28,6 +28,7 @@ from teleop_direct_retarget import (
 from teleop_hand_ik import (
     HandIkError,
     Revo2HandIkSidecar,
+    LatestHandIkWorker,
     add_hand_ik_arguments,
     hand_ik_config_from_args,
     hand_ik_enabled,
@@ -75,7 +76,7 @@ ARM_CMD_TYPE = "bodyctrl_msgs/msg/CmdSetMotorPosition"
 ROSBRIDGE_HOST = "192.168.1.110"
 ROSBRIDGE_PORT = 9091
 
-CONTROL_RATE_HZ = 20.0
+CONTROL_RATE_HZ = 100.0
 ARM_MOTOR_IDS = [11, 12, 13, 14, 15, 16, 17, 21, 22, 23, 24, 25, 26, 27]
 IK_ARM_JOINT_NAMES = [
     "shoulder_pitch_l_joint",
@@ -123,7 +124,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--control-mode", choices=("skeleton", "direct", "ik", "raise_template"), default="skeleton", help="skeleton=自动对齐骨架并跟随手腕；direct=高级骨段方向映射；ik=高级末端位姿 IK；raise_template=姿态模板")
     parser.add_argument("--ik-backend", choices=("teleop_dls", "tiangong2pro_official", "ubtech_casadi"), default="teleop_dls", help="IK 求解后端；官方后端同时控制 31 号腰部关节")
     parser.add_argument("--ik-task", choices=("pose", "position_only"), default="pose", help="IK 任务类型：pose=官方完整 TCP 位姿 IK；position_only=实验性锁腕位置 IK")
-    parser.add_argument("--rate", type=float, default=CONTROL_RATE_HZ, help="回放频率，默认 20Hz")
+    parser.add_argument("--rate", "--control-rate", dest="rate", type=float, default=CONTROL_RATE_HZ, help="回放手臂控制频率，默认 100Hz；需要相应的新鲜反馈")
+    parser.add_argument("--max-joint-velocity", type=float, default=0.48, help="关节速度上限 rad/s，同时受 URDF 与单步上限约束")
+    parser.add_argument("--hand-control-rate", type=float, default=20.0, help="独立手部异步 IK 最大计算频率 Hz")
+    parser.add_argument("--max-hand-velocity", type=float, default=1.0, help="手部归一化位置每秒最大变化")
     parser.add_argument("--max-frames", type=int, default=None, help="最多读取多少帧")
     parser.add_argument("--stride", type=int, default=1, help="按帧间隔抽样，默认不抽样")
     parser.add_argument("--position-scale", type=float, default=1.0, help="有效标定安全边界内的总增益")
@@ -570,7 +574,7 @@ def make_ik_solver(args: argparse.Namespace, home_q: np.ndarray | None = None):
         task_mode=args.ik_task,
         max_iterations=8,
         damping=0.03,
-        max_joint_delta_per_step=args.max_joint_delta_per_step,
+        max_joint_delta_per_step=replay_step_cap(args),
         locked_joint_indices=POSITION_ONLY_LOCKED_JOINT_INDICES if args.ik_task == "position_only" else (),
         home_q=None if home_q is None else np.asarray(home_q, dtype=float),
         enable_local_log=False,
@@ -699,7 +703,7 @@ def plan_ik_replay_commands(
             q_next=np.asarray(result.command.positions, dtype=float),
             q_ref=reference_q,
             limits=solver.joint_limits,
-            max_step=args.max_joint_delta_per_step,
+            max_step=replay_step_cap(args),
             smoothing_alpha=1.0,
         )
         safe_waist = None
@@ -709,7 +713,7 @@ def plan_ik_replay_commands(
                 last_waist_command,
                 baseline_waist,
                 solver.waist_limit,
-                args.max_joint_delta_per_step,
+                replay_step_cap(args),
                 args.max_command_delta_from_baseline,
             )
         command = replace(result.command, positions=safe_q, waist_position=safe_waist)
@@ -770,8 +774,10 @@ def plan_direct_replay_commands(
     args: argparse.Namespace,
     baseline_q: np.ndarray,
 ) -> tuple[list[IKCommand], dict[str, Any]]:
+    effective_args = copy.copy(args)
+    effective_args.max_joint_delta_per_step = replay_step_cap(args)
     direct_config = direct_retarget_config_from_args(
-        args,
+        effective_args,
         joint_names=IK_ARM_JOINT_NAMES,
         motor_ids=ARM_MOTOR_IDS,
     )
@@ -874,7 +880,7 @@ def plan_raise_template_replay_commands(
             joint_names=IK_ARM_JOINT_NAMES,
             motor_ids=ARM_MOTOR_IDS,
             control_side=args.control_side,
-            max_joint_delta_per_step=args.max_joint_delta_per_step,
+            max_joint_delta_per_step=replay_step_cap(args),
             smoothing_alpha=1.0,
         )
     )
@@ -914,6 +920,13 @@ def plan_raise_template_replay_commands(
     return commands, summary
 
 
+def replay_step_cap(args: argparse.Namespace) -> float:
+    velocity = getattr(args, "max_joint_velocity", 0.48)
+    if not math.isfinite(velocity) or velocity <= 0 or not math.isfinite(args.rate) or args.rate <= 0:
+        raise ValueError("rate 和 max_joint_velocity 必须为有限正数")
+    return min(args.max_joint_delta_per_step, velocity / args.rate)
+
+
 def validate_skeleton_replay_options(args: argparse.Namespace) -> None:
     if args.workspace_calibration is not None or args.wrist_calibration is not None:
         raise ValueError("skeleton 自动对齐模式不接受 workspace/wrist 人工标定文件；请移除这些参数或显式选择高级 ik 模式")
@@ -925,7 +938,9 @@ def make_skeleton_retargeter(args: argparse.Namespace):
     validate_skeleton_replay_options(args)
     from teleop_skeleton_retarget import SkeletonRetargeter
 
-    config = direct_retarget_config_from_args(args, joint_names=IK_ARM_JOINT_NAMES, motor_ids=ARM_MOTOR_IDS)
+    effective_args = copy.copy(args)
+    effective_args.max_joint_delta_per_step = replay_step_cap(args)
+    config = direct_retarget_config_from_args(effective_args, joint_names=IK_ARM_JOINT_NAMES, motor_ids=ARM_MOTOR_IDS)
     return SkeletonRetargeter(config, orientation_scale=args.orientation_scale)
 
 
@@ -1142,10 +1157,16 @@ class ReplayFeedbackGate:
         self.waist_status = waist_status
         self.hand_status = hand_status
         self.hand_config = hand_config
+        self.hand_worker = None
         self.baseline_q = None if baseline_q is None else self.arm_vector(baseline_q)
         self.baseline_waist = float(baseline_waist)
         self.last_arm_command: np.ndarray | None = None
         self.last_waist_command: float | None = None
+        self.last_arm_publish_time: float | None = None
+        self.last_waist_publish_time: float | None = None
+        self.last_hand_publish_time: dict[str, float] = {}
+        self.joint_velocity_limits = np.full(14, np.inf)
+        self.waist_velocity_limit = float("inf")
         self.joint_limits: np.ndarray | None = None
         self.waist_limit: tuple[float, float] | None = None
         for name in ("rate", "max_joint_delta_per_step", "max_command_delta_from_baseline"):
@@ -1156,6 +1177,10 @@ class ReplayFeedbackGate:
             value = float(getattr(args, name))
             if not math.isfinite(value) or value < 0:
                 raise ValueError(f"{name} 必须为有限非负数")
+        for name, default in (("max_joint_velocity", 0.48), ("hand_control_rate", 20.0), ("max_hand_velocity", 1.0)):
+            value = float(getattr(args, name, default))
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError(f"{name} 必须为有限正数")
         if not math.isfinite(self.baseline_waist):
             raise ValueError("腰部 baseline 必须为有限数值")
         if arm_status is not None:
@@ -1166,11 +1191,13 @@ class ReplayFeedbackGate:
                 if joint is None:
                     raise ValueError("官方 URDF 缺少腰部机械限位")
                 self.waist_limit = (float(joint.attrib["lower"]), float(joint.attrib["upper"]))
+                self.waist_velocity_limit = joint_velocity_limits_from_urdf(model_path, (WAIST_JOINT_NAME,))[0]
                 if not all(math.isfinite(value) for value in self.waist_limit) or self.waist_limit[0] >= self.waist_limit[1]:
                     raise ValueError("官方 URDF 腰部机械限位无效")
             else:
                 model_path = source / "models" / "walker_tienkung_ei_description" / "walker_tienkung_ei.urdf"
             self.joint_limits = np.asarray(arm_joint_limits_from_urdf(model_path), dtype=float)
+            self.joint_velocity_limits = np.asarray(joint_velocity_limits_from_urdf(model_path, IK_ARM_JOINT_NAMES))
 
     @staticmethod
     def arm_vector(positions: Any) -> np.ndarray:
@@ -1180,6 +1207,8 @@ class ReplayFeedbackGate:
         return values.copy()
 
     def snapshot(self) -> tuple[np.ndarray | None, float | None]:
+        if self.hand_worker is not None:
+            self.hand_worker.check_health()
         if not self.client.is_connected:
             raise RuntimeError("rosbridge 已断开，停止发送控制命令")
         arm_q = None
@@ -1214,7 +1243,7 @@ class ReplayFeedbackGate:
             raise RuntimeError(f"{side} 手部反馈无效")
         return sample
 
-    def prepare_arm(self, command: IKCommand, *, enforce_baseline: bool) -> IKCommand:
+    def prepare_arm(self, command: IKCommand, *, enforce_baseline: bool, submitted_arm: bool = False) -> IKCommand:
         if self.arm_status is None or self.joint_limits is None:
             raise RuntimeError("发布手臂命令需要实测状态")
         if tuple(command.motor_ids) != tuple(ARM_MOTOR_IDS) or tuple(command.joint_names) != tuple(IK_ARM_JOINT_NAMES):
@@ -1224,9 +1253,12 @@ class ReplayFeedbackGate:
         target = self.arm_vector(command.positions)
         current_q, current_waist = self.snapshot()
         indices = controlled_indices(command.control_side)
-        max_step = self.args.max_joint_delta_per_step
-        lower = np.maximum(self.joint_limits[:, 0], current_q - max_step)
-        upper = np.minimum(self.joint_limits[:, 1], current_q + max_step)
+        now = time.monotonic()
+        dt = command_time_step(self.args.rate, now, None if submitted_arm else self.last_arm_publish_time)
+        max_step = np.minimum(self.args.max_joint_delta_per_step, np.minimum(getattr(self.args, "max_joint_velocity", 0.48), self.joint_velocity_limits) * dt)
+        measured_step = np.minimum(self.args.max_joint_delta_per_step, np.minimum(getattr(self.args, "max_joint_velocity", 0.48), self.joint_velocity_limits) / self.args.rate)
+        lower = np.maximum(self.joint_limits[:, 0], current_q - measured_step)
+        upper = np.minimum(self.joint_limits[:, 1], current_q + measured_step)
         if self.last_arm_command is not None:
             lower = np.maximum(lower, self.last_arm_command - max_step)
             upper = np.minimum(upper, self.last_arm_command + max_step)
@@ -1241,11 +1273,14 @@ class ReplayFeedbackGate:
         if self.waist_limit is not None:
             if safe_waist is None or not math.isfinite(float(safe_waist)):
                 raise RuntimeError("官方 IK 回放需要有限的腰部命令")
-            lower_waist = max(self.waist_limit[0], current_waist - max_step)
-            upper_waist = min(self.waist_limit[1], current_waist + max_step)
+            waist_dt = command_time_step(self.args.rate, now, self.last_waist_publish_time)
+            waist_step = min(self.args.max_joint_delta_per_step, getattr(self.args, "max_joint_velocity", 0.48) * waist_dt, self.waist_velocity_limit * waist_dt)
+            measured_waist_step = min(self.args.max_joint_delta_per_step, min(getattr(self.args, "max_joint_velocity", 0.48), self.waist_velocity_limit) / self.args.rate)
+            lower_waist = max(self.waist_limit[0], current_waist - measured_waist_step)
+            upper_waist = min(self.waist_limit[1], current_waist + measured_waist_step)
             if self.last_waist_command is not None:
-                lower_waist = max(lower_waist, self.last_waist_command - max_step)
-                upper_waist = min(upper_waist, self.last_waist_command + max_step)
+                lower_waist = max(lower_waist, self.last_waist_command - waist_step)
+                upper_waist = min(upper_waist, self.last_waist_command + waist_step)
             if enforce_baseline:
                 lower_waist = max(lower_waist, self.baseline_waist - self.args.max_command_delta_from_baseline)
                 upper_waist = min(upper_waist, self.baseline_waist + self.args.max_command_delta_from_baseline)
@@ -1265,6 +1300,7 @@ def publish_command(
     *,
     safety: ReplayFeedbackGate,
     enforce_baseline: bool = True,
+    mocap_received_at: float | None = None,
 ) -> IKCommand:
     expected_ids = [ARM_MOTOR_IDS[index] for index in controlled_indices(command.control_side)]
     if [template.get("name") for template in templates] != expected_ids:
@@ -1278,13 +1314,19 @@ def publish_command(
     if command.waist_position is not None:
         if waist_topic is None:
             raise RuntimeError("IKCommand 包含腰部命令，但 /waist/cmd_pos 发布器未初始化")
+    if mocap_received_at is not None:
+        require_fresh_feedback(mocap_received_at, time.monotonic(), 0.3, "replay mocap input")
     arm_topic.publish(build_rosbridge_motor_message(command, templates))
     safety.last_arm_command = command.positions.copy()
+    safety.last_arm_publish_time = time.monotonic()
     if command.waist_position is not None:
-        checked = safety.prepare_arm(command, enforce_baseline=enforce_baseline)
+        checked = safety.prepare_arm(command, enforce_baseline=enforce_baseline, submitted_arm=True)
         command = replace(command, waist_position=checked.waist_position)
+        if mocap_received_at is not None:
+            require_fresh_feedback(mocap_received_at, time.monotonic(), 0.3, "replay mocap input")
         waist_topic.publish(build_rosbridge_waist_message(command, WAIST_MOTOR_TEMPLATE))
         safety.last_waist_command = command.waist_position
+        safety.last_waist_publish_time = time.monotonic()
     return command
 
 
@@ -1321,6 +1363,7 @@ def publish_hand_output(
     config: HandControlConfig,
     *,
     safety: ReplayFeedbackGate,
+    mocap_received_at: float | None = None,
 ) -> None:
     safety.snapshot()
     validate_hand_output(output, topics)
@@ -1331,15 +1374,24 @@ def publish_hand_output(
         if target is None:
             continue
         safety.snapshot()
+        if mocap_received_at is not None:
+            require_fresh_feedback(mocap_received_at, time.monotonic(), 0.3, "hand IK input")
         sample = safety.hand_sample(side)
-        safe = apply_hand_command_safety(target, sample[1], None, side, config)
+        dt = command_time_step(getattr(safety.args, "hand_control_rate", 20.0), time.monotonic(), safety.last_hand_publish_time.get(side))
+        budget = min(config.max_step, getattr(safety.args, "max_hand_velocity", 1.0) * dt)
+        measured_budget = min(config.max_step, getattr(safety.args, "max_hand_velocity", 1.0) / getattr(safety.args, "hand_control_rate", 20.0))
+        if budget <= 0:
+            continue
+        limited_config = replace(config, max_step=budget)
+        safe = apply_hand_command_safety(target, sample[1], None, side, limited_config)
         previous = last_commands.get(side)
         if previous is not None:
-            safe = tuple(float(value) for value in np.clip(safe, np.asarray(previous) - config.max_step, np.asarray(previous) + config.max_step))
-        if any(abs(value - measured) > config.max_step + 1e-9 for value, measured in zip(safe, sample[1])):
+            safe = tuple(float(value) for value in np.clip(safe, np.asarray(previous) - budget, np.asarray(previous) + budget))
+        if any(abs(value - measured) > measured_budget + 1e-9 for value, measured in zip(safe, sample[1])):
             raise RuntimeError(f"{side} 手部命令与最新反馈的变化过大")
         topic.publish(build_hand_joint_state_message(safe))
         last_commands[side] = safe
+        safety.last_hand_publish_time[side] = time.monotonic()
 
 
 def restore_baselines(
@@ -1463,6 +1515,57 @@ def prepose_to_baseline(
     print_json_line("PREPOSE_BASELINE", {"mode": args.prepose, "seconds": args.prepose_seconds, "positions": baseline_q})
 
 
+def replay_control_ticks(frames, rate: float, timestamps=None):
+    """Keep recorded time while sampling the latest available source at rate Hz.
+
+    Repeated held frames retain their original scheduled monotonic receipt time.
+    A delayed callback skips obsolete ticks rather than speeding up the movie.
+    """
+    if not frames:
+        return
+    if not math.isfinite(rate) or rate <= 0:
+        raise ValueError("回放控制频率必须为有限正数")
+    if timestamps is None:
+        timestamps = [frame.get("receive_time", index / rate) for index, frame in enumerate(frames)]
+    times = np.asarray(timestamps, dtype=float)
+    if times.shape != (len(frames),) or not np.all(np.isfinite(times)) or np.any(np.diff(times) < 0):
+        raise ValueError("录制帧时间必须有限并按时间顺序排列")
+    offsets = times - times[0]
+    duration = float(offsets[-1])
+    began = time.monotonic()
+    source_index, tick = 0, 0
+    while True:
+        deadline = began + min(tick / rate, duration)
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            time.sleep(remaining)
+        elapsed = time.monotonic() - began
+        while source_index + 1 < len(frames) and offsets[source_index + 1] <= elapsed + 1e-9:
+            source_index += 1
+        yield source_index, frames[source_index], began + float(offsets[source_index])
+        if elapsed + 1e-9 >= duration and source_index == len(frames) - 1:
+            # Keep the final sample for one control period before recovery.
+            time.sleep(1.0 / rate)
+            return
+        tick = max(tick + 1, int(math.floor(elapsed * rate + 1e-9)) + 1)
+
+
+def poll_async_hand_output(worker, frame, received_at: float, config: HandControlConfig):
+    if worker is None:
+        return None, None
+    worker.submit(frame, received_at)
+    completed = worker.poll()
+    if completed is None or not feedback_is_fresh(completed.received_at, time.monotonic(), 0.3):
+        return None, None
+    result = completed.result
+    output = {}
+    if result.left_calibrated:
+        output["left"] = map_hand_radians(result.joint_positions, "left", config)
+    if result.right_calibrated:
+        output["right"] = map_hand_radians(result.joint_positions, "right", config)
+    return output, completed.received_at
+
+
 def execute_skeleton_replay(
     args: argparse.Namespace, client: roslibpy.Ros, status_buffer: ArmStatusBuffer,
     frames: list[dict[str, Any]], baseline_q: np.ndarray,
@@ -1480,24 +1583,18 @@ def execute_skeleton_replay(
     last_hands: dict[str, tuple[float, ...] | None] = {}
     sidecar = None
     aligned = False
-    interval = 1.0 / args.rate
     try:
         if hand_control_config.publish_enabled and hand_ik_enabled(args):
-            sidecar = Revo2HandIkSidecar(hand_ik_config_from_args(args))
-        for index, frame in enumerate(frames):
+            sidecar = LatestHandIkWorker(Revo2HandIkSidecar(hand_ik_config_from_args(args)), getattr(args, "hand_control_rate", 20.0))
+            safety.hand_worker = sidecar
+        for index, frame, source_received_at in replay_control_ticks(frames, args.rate):
             solve_started_at = time.monotonic()
+            require_fresh_feedback(source_received_at, solve_started_at, 0.3, "replay mocap input")
             current_q, _ = safety.snapshot()
-            hand_output = None
-            if sidecar is not None:
-                result = sidecar.solve_replay_frame(frame)
-                hand_output = {}
-                if result.left_calibrated:
-                    hand_output["left"] = map_hand_radians(result.joint_positions, "left", hand_control_config)
-                if result.right_calibrated:
-                    hand_output["right"] = map_hand_radians(result.joint_positions, "right", hand_control_config)
+            hand_output, hand_received_at = poll_async_hand_output(sidecar, frame, source_received_at, hand_control_config)
             current_q, _ = safety.snapshot()
             if not aligned:
-                status = observe_skeleton_startup(startup, time.monotonic(), frame, current_q)
+                status = observe_skeleton_startup(startup, source_received_at, frame, current_q)
                 if status.ready:
                     baseline_q = safety.arm_vector(status.robot_baseline_q)
                     retargeter.align(status.window_frames, baseline_q)
@@ -1519,11 +1616,8 @@ def execute_skeleton_replay(
                     raise RuntimeError("skeleton 回放不得产生腰部命令")
                 validate_hand_output(hand_output, hand_topics)
                 require_fresh_feedback(solve_started_at, time.monotonic(), MAX_ARM_STATUS_AGE_SECONDS, "skeleton IK result")
-                publish_command(cmd_topic, command, templates, safety=safety)
-                publish_hand_output(hand_output, hand_topics, hand_status_buffers, last_hands, hand_control_config, safety=safety)
-            remaining = solve_started_at + interval - time.monotonic()
-            if remaining > 0:
-                time.sleep(remaining)
+                publish_command(cmd_topic, command, templates, safety=safety, mocap_received_at=source_received_at)
+                publish_hand_output(hand_output, hand_topics, hand_status_buffers, last_hands, hand_control_config, safety=safety, mocap_received_at=hand_received_at)
         if not aligned:
             raise RuntimeError("骨架回放未取得稳定启动窗口，运动命令保持停发")
         restore_baselines(args, safety, hand_topics, hand_baselines, last_hands, cmd_topic, templates, baseline_q)
@@ -1591,7 +1685,8 @@ def execute_ik_replay_streaming(
     hand_sidecar = None
     if hand_cmd_topics and hand_ik_enabled(args):
         try:
-            hand_sidecar = Revo2HandIkSidecar(hand_ik_config_from_args(args))
+            hand_sidecar = LatestHandIkWorker(Revo2HandIkSidecar(hand_ik_config_from_args(args)), getattr(args, "hand_control_rate", 20.0))
+            safety.hand_worker = hand_sidecar
         except Exception as exc:
             raise RuntimeError(f"手部 IK 启动失败，取消回放: {exc}") from exc
     time.sleep(0.2)
@@ -1649,7 +1744,6 @@ def execute_ik_replay_streaming(
 
     indices = controlled_indices(args.control_side)
     interval = 1.0 / args.rate
-    start = time.perf_counter()
     last_command_q: np.ndarray | None = None
     error_norms: list[float] = []
     limited_count = 0
@@ -1662,9 +1756,10 @@ def execute_ik_replay_streaming(
     max_solve_seconds = 0.0
 
     try:
-        for index, frame in enumerate(frames):
+        for index, frame, source_received_at in replay_control_ticks(frames, args.rate):
             frame_start = time.perf_counter()
             solve_started_at = time.monotonic()
+            require_fresh_feedback(source_received_at, solve_started_at, 0.3, "replay mocap input")
             current_q, current_waist = safety.snapshot()
             left_mocap_wrist = replay_anatomical_wrist_pose(frame, "left", wrist_calibration)
             right_mocap_wrist = replay_anatomical_wrist_pose(frame, "right", wrist_calibration)
@@ -1720,7 +1815,7 @@ def execute_ik_replay_streaming(
                 q_next=np.asarray(result.command.positions, dtype=float),
                 q_ref=current_q,
                 limits=solver.joint_limits,
-                max_step=args.max_joint_delta_per_step,
+                max_step=replay_step_cap(args),
                 smoothing_alpha=1.0,
             )
             safe_waist = None
@@ -1730,7 +1825,7 @@ def execute_ik_replay_streaming(
                     current_waist,
                     baseline_waist,
                     solver.waist_limit,
-                    args.max_joint_delta_per_step,
+                    replay_step_cap(args),
                     args.max_command_delta_from_baseline,
                 )
 
@@ -1751,25 +1846,15 @@ def execute_ik_replay_streaming(
                 return 13
 
             command = replace(result.command, positions=safe_q, waist_position=safe_waist)
-            hand_output = None
-            if hand_sidecar is not None:
-                hand_result = hand_sidecar.solve_replay_frame(frame)
-                hand_output = {}
-                if hand_result.left_calibrated:
-                    hand_output["left"] = map_hand_radians(
-                        hand_result.joint_positions, "left", hand_control_config
-                    )
-                if hand_result.right_calibrated:
-                    hand_output["right"] = map_hand_radians(
-                        hand_result.joint_positions, "right", hand_control_config
-                    )
+            hand_output, hand_received_at = poll_async_hand_output(hand_sidecar, frame, source_received_at, hand_control_config)
             validate_hand_output(hand_output, hand_cmd_topics)
             require_fresh_feedback(solve_started_at, time.monotonic(), MAX_ARM_STATUS_AGE_SECONDS, "IK result")
-            command = publish_command(cmd_topic, command, templates, waist_cmd_topic, safety=safety)
+            command = publish_command(cmd_topic, command, templates, waist_cmd_topic, safety=safety, mocap_received_at=source_received_at)
             safe_q, safe_waist = command.positions, command.waist_position
             publish_hand_output(
                 hand_output or None, hand_cmd_topics, hand_status_buffers,
                 last_hand_commands, hand_control_config, safety=safety,
+                mocap_received_at=hand_received_at,
             )
 
             solve_seconds = time.perf_counter() - frame_start
@@ -1828,10 +1913,6 @@ def execute_ik_replay_streaming(
                     },
                 )
 
-            next_time = start + frame_number * interval
-            sleep_seconds = next_time - time.perf_counter()
-            if sleep_seconds > 0:
-                time.sleep(sleep_seconds)
 
         print_json_line(
             "STREAM_IK_SUMMARY",
@@ -1915,10 +1996,10 @@ def execute_hand_only_replay(
     safety = ReplayFeedbackGate(
         args, client, None, None, hand_status_buffers, hand_control_config,
     )
-    interval = 1.0 / args.rate
-    start = time.perf_counter()
     try:
-        for index, hand_output in enumerate(hand_outputs):
+        for index, _, source_received_at in replay_control_ticks(frames, args.rate):
+            require_fresh_feedback(source_received_at, time.monotonic(), 0.3, "replay mocap input")
+            hand_output = hand_outputs[index] if index < len(hand_outputs) else None
             publish_hand_output(
                 hand_output,
                 hand_cmd_topics,
@@ -1926,11 +2007,8 @@ def execute_hand_only_replay(
                 last_hand_commands,
                 hand_control_config,
                 safety=safety,
+                mocap_received_at=source_received_at,
             )
-            next_time = start + (index + 1) * interval
-            sleep_seconds = next_time - time.perf_counter()
-            if sleep_seconds > 0:
-                time.sleep(sleep_seconds)
 
         restore_baselines(args, safety, hand_cmd_topics, hand_baselines, last_hand_commands)
         if hand_cmd_topics:
@@ -1989,13 +2067,14 @@ def execute_replay(
         baseline_waist=baseline_waist if controls_waist else None,
     )
 
-    interval = 1.0 / args.rate
-    start = time.perf_counter()
     try:
-        for index, command in enumerate(commands):
+        for index, command, source_received_at in replay_control_ticks(
+            commands, args.rate, [command.timestamp for command in commands],
+        ):
+            require_fresh_feedback(source_received_at, time.monotonic(), 0.3, "replay command input")
             hand_output = hand_outputs[index] if index < len(hand_outputs) else None
             validate_hand_output(hand_output, hand_cmd_topics)
-            publish_command(cmd_topic, command, templates, waist_cmd_topic, safety=safety)
+            publish_command(cmd_topic, command, templates, waist_cmd_topic, safety=safety, mocap_received_at=source_received_at)
             publish_hand_output(
                 hand_output,
                 hand_cmd_topics,
@@ -2003,11 +2082,8 @@ def execute_replay(
                 last_hand_commands,
                 hand_control_config,
                 safety=safety,
+                mocap_received_at=source_received_at,
             )
-            next_time = start + (index + 1) * interval
-            sleep_seconds = next_time - time.perf_counter()
-            if sleep_seconds > 0:
-                time.sleep(sleep_seconds)
 
         after_move = status_buffer.latest_complete()
         if after_move is not None:
@@ -2057,6 +2133,11 @@ def execute_replay(
 
 def main() -> int:
     args = parse_args()
+    replay_step_cap(args)
+    for name, default in (("hand_control_rate", 20.0), ("max_hand_velocity", 1.0)):
+        value = float(getattr(args, name, default))
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError(f"{name} 必须为有限正数")
     if args.control_mode == "skeleton":
         validate_skeleton_replay_options(args)
     try:

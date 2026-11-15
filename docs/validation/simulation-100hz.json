@@ -1,0 +1,1709 @@
+{
+  "schema_version": 1,
+  "engine": "PyBullet DIRECT",
+  "control_hz": 100.0,
+  "physics_hz": 400.0,
+  "physics_substeps": 4,
+  "viewer_hz": 20.0,
+  "max_joint_velocity_rad_s": 0.48,
+  "max_joint_step_rad": 0.06,
+  "max_baseline_delta_rad": 1.0,
+  "realtime_pacing": true,
+  "profile": "skeleton-100hz",
+  "fixed_base": true,
+  "gravity_m_s2": [
+    0,
+    0,
+    -9.81
+  ],
+  "actuator_model": {
+    "mode": "POSITION_CONTROL",
+    "position_gain": 0.18,
+    "velocity_gain": 1.0,
+    "force_limits": "URDF effort",
+    "max_velocity": "0.98 * min(URDF velocity, operator velocity)",
+    "numerical_velocity_margin_ratio": 0.98,
+    "motor_velocity_caps_rad_s": [
+      0.4704,
+      0.4704,
+      0.4704,
+      0.4704,
+      0.4704,
+      0.4704,
+      0.4704,
+      0.4704,
+      0.4704,
+      0.4704,
+      0.4704,
+      0.4704,
+      0.4704,
+      0.4704
+    ]
+  },
+  "profile_note": "current and 100hz use identical solver parameters; algorithm benchmarking is separate",
+  "blas_threadpools": [
+    {
+      "user_api": "blas",
+      "internal_api": "openblas",
+      "num_threads": 1,
+      "prefix": "libscipy_openblas",
+      "filepath": "libscipy_openblas64_-fdde5778.so",
+      "version": "0.3.30",
+      "threading_layer": "pthreads",
+      "architecture": "Haswell"
+    },
+    {
+      "user_api": "blas",
+      "internal_api": "openblas",
+      "num_threads": 1,
+      "prefix": "libscipy_openblas",
+      "filepath": "libscipy_openblas-5f890258.so",
+      "version": "0.3.31.dev",
+      "threading_layer": "pthreads",
+      "architecture": "Haswell"
+    }
+  ],
+  "fk_validation": {
+    "samples": 8,
+    "position_max_m": 4.799895840480301e-08,
+    "rotation_max_rad": 1.7120130796843874e-07,
+    "segment_direction_max_rad": 1.0323827311807144e-07,
+    "passed": true
+  },
+  "geometry": {
+    "source": "app/src/models/walker_tienkung_ei_description/walker_tienkung_ei.urdf",
+    "source_sha256": "f6a36cec66febaf8e86093ef05f10696bac2d97e21b5d1aa5206a15ca428d877",
+    "kinematics_inertia_sha256": "97715c8fa206ed800f225f4cd63175b84d884cbfb866b8e5a9d8a598e7630734",
+    "preserved": true,
+    "missing_mesh_replacements": [
+      {
+        "link": "pelvis",
+        "kind": "visual",
+        "missing_mesh": "./meshes/pelvis.STL"
+      },
+      {
+        "link": "pelvis",
+        "kind": "collision",
+        "missing_mesh": "./meshes/pelvis.STL"
+      },
+      {
+        "link": "hip_roll_l_link",
+        "kind": "visual",
+        "missing_mesh": "./meshes/hip_roll_l_link.STL"
+      },
+      {
+        "link": "hip_roll_l_link",
+        "kind": "collision",
+        "missing_mesh": "./meshes/hip_roll_l_link.STL"
+      },
+      {
+        "link": "hip_pitch_l_link",
+        "kind": "visual",
+        "missing_mesh": "./meshes/hip_pitch_l_link.STL"
+      },
+      {
+        "link": "hip_pitch_l_link",
+        "kind": "collision",
+        "missing_mesh": "./meshes/hip_pitch_l_link.STL"
+      },
+      {
+        "link": "hip_yaw_l_link",
+        "kind": "visual",
+        "missing_mesh": "./meshes/hip_yaw_l_link.STL"
+      },
+      {
+        "link": "hip_yaw_l_link",
+        "kind": "collision",
+        "missing_mesh": "./meshes/hip_yaw_l_link.STL"
+      },
+      {
+        "link": "knee_pitch_l_link",
+        "kind": "visual",
+        "missing_mesh": "./meshes/knee_pitch_l_link.STL"
+      },
+      {
+        "link": "knee_pitch_l_link",
+        "kind": "collision",
+        "missing_mesh": "./meshes/knee_pitch_l_link.STL"
+      },
+      {
+        "link": "ankle_pitch_l_link",
+        "kind": "visual",
+        "missing_mesh": "./meshes/ankle_pitch_l_link.STL"
+      },
+      {
+        "link": "ankle_pitch_l_link",
+        "kind": "collision",
+        "missing_mesh": "./meshes/ankle_pitch_l_link.STL"
+      },
+      {
+        "link": "ankle_roll_l_link",
+        "kind": "visual",
+        "missing_mesh": "./meshes/ankle_roll_l_link.STL"
+      },
+      {
+        "link": "ankle_roll_l_link",
+        "kind": "collision",
+        "missing_mesh": "./meshes/ankle_roll_l_link.STL"
+      },
+      {
+        "link": "hip_roll_r_link",
+        "kind": "visual",
+        "missing_mesh": "./meshes/hip_roll_r_link.STL"
+      },
+      {
+        "link": "hip_roll_r_link",
+        "kind": "collision",
+        "missing_mesh": "./meshes/hip_roll_r_link.STL"
+      },
+      {
+        "link": "hip_pitch_r_link",
+        "kind": "visual",
+        "missing_mesh": "./meshes/hip_pitch_r_link.STL"
+      },
+      {
+        "link": "hip_pitch_r_link",
+        "kind": "collision",
+        "missing_mesh": "./meshes/hip_pitch_r_link.STL"
+      },
+      {
+        "link": "hip_yaw_r_link",
+        "kind": "visual",
+        "missing_mesh": "./meshes/hip_yaw_r_link.STL"
+      },
+      {
+        "link": "hip_yaw_r_link",
+        "kind": "collision",
+        "missing_mesh": "./meshes/hip_yaw_r_link.STL"
+      },
+      {
+        "link": "knee_pitch_r_link",
+        "kind": "visual",
+        "missing_mesh": "./meshes/knee_pitch_r_link.STL"
+      },
+      {
+        "link": "knee_pitch_r_link",
+        "kind": "collision",
+        "missing_mesh": "./meshes/knee_pitch_r_link.STL"
+      },
+      {
+        "link": "ankle_pitch_r_link",
+        "kind": "visual",
+        "missing_mesh": "./meshes/ankle_pitch_r_link.STL"
+      },
+      {
+        "link": "ankle_pitch_r_link",
+        "kind": "collision",
+        "missing_mesh": "./meshes/ankle_pitch_r_link.STL"
+      },
+      {
+        "link": "ankle_roll_r_link",
+        "kind": "visual",
+        "missing_mesh": "./meshes/ankle_roll_r_link.STL"
+      },
+      {
+        "link": "ankle_roll_r_link",
+        "kind": "collision",
+        "missing_mesh": "./meshes/ankle_roll_r_link.STL"
+      },
+      {
+        "link": "waist_yaw_link",
+        "kind": "visual",
+        "missing_mesh": "./meshes/waist_yaw_link.STL"
+      },
+      {
+        "link": "waist_yaw_link",
+        "kind": "collision",
+        "missing_mesh": "./meshes/waist_yaw_link.STL"
+      },
+      {
+        "link": "head_yaw_link",
+        "kind": "visual",
+        "missing_mesh": "./meshes/head_yaw_link.STL"
+      },
+      {
+        "link": "head_yaw_link",
+        "kind": "collision",
+        "missing_mesh": "./meshes/head_yaw_link.STL"
+      },
+      {
+        "link": "head_pitch_link",
+        "kind": "visual",
+        "missing_mesh": "./meshes/head_pitch_link.STL"
+      },
+      {
+        "link": "head_pitch_link",
+        "kind": "collision",
+        "missing_mesh": "./meshes/head_pitch_link.STL"
+      },
+      {
+        "link": "head_roll_link",
+        "kind": "visual",
+        "missing_mesh": "./meshes/head_roll_link.STL"
+      },
+      {
+        "link": "head_roll_link",
+        "kind": "collision",
+        "missing_mesh": "./meshes/head_roll_link.STL"
+      },
+      {
+        "link": "camera_head_link",
+        "kind": "visual",
+        "missing_mesh": "./meshes/camera_head_link.STL"
+      },
+      {
+        "link": "camera_head_link",
+        "kind": "collision",
+        "missing_mesh": "./meshes/camera_head_link.STL"
+      },
+      {
+        "link": "shoulder_pitch_l_link",
+        "kind": "visual",
+        "missing_mesh": "./meshes/shoulder_pitch_l_link.STL"
+      },
+      {
+        "link": "shoulder_pitch_l_link",
+        "kind": "collision",
+        "missing_mesh": "./meshes/shoulder_pitch_l_link.STL"
+      },
+      {
+        "link": "shoulder_roll_l_link",
+        "kind": "visual",
+        "missing_mesh": "./meshes/shoulder_roll_l_link.STL"
+      },
+      {
+        "link": "shoulder_roll_l_link",
+        "kind": "collision",
+        "missing_mesh": "./meshes/shoulder_roll_l_link.STL"
+      },
+      {
+        "link": "shoulder_yaw_l_link",
+        "kind": "visual",
+        "missing_mesh": "./meshes/shoulder_yaw_l_link.STL"
+      },
+      {
+        "link": "shoulder_yaw_l_link",
+        "kind": "collision",
+        "missing_mesh": "./meshes/shoulder_yaw_l_link.STL"
+      },
+      {
+        "link": "elbow_pitch_l_link",
+        "kind": "visual",
+        "missing_mesh": "./meshes/elbow_pitch_l_link.STL"
+      },
+      {
+        "link": "elbow_pitch_l_link",
+        "kind": "collision",
+        "missing_mesh": "./meshes/elbow_pitch_l_link.STL"
+      },
+      {
+        "link": "elbow_yaw_l_link",
+        "kind": "visual",
+        "missing_mesh": "./meshes/elbow_yaw_l_link.STL"
+      },
+      {
+        "link": "elbow_yaw_l_link",
+        "kind": "collision",
+        "missing_mesh": "./meshes/elbow_yaw_l_link.STL"
+      },
+      {
+        "link": "wrist_pitch_l_link",
+        "kind": "visual",
+        "missing_mesh": "./meshes/wrist_pitch_l_link.STL"
+      },
+      {
+        "link": "wrist_pitch_l_link",
+        "kind": "collision",
+        "missing_mesh": "./meshes/wrist_pitch_l_link.STL"
+      },
+      {
+        "link": "wrist_roll_l_link",
+        "kind": "visual",
+        "missing_mesh": "./meshes/wrist_roll_l_link.STL"
+      },
+      {
+        "link": "wrist_roll_l_link",
+        "kind": "collision",
+        "missing_mesh": "./meshes/wrist_roll_l_link.STL"
+      },
+      {
+        "link": "shoulder_pitch_r_link",
+        "kind": "visual",
+        "missing_mesh": "./meshes/shoulder_pitch_r_link.STL"
+      },
+      {
+        "link": "shoulder_pitch_r_link",
+        "kind": "collision",
+        "missing_mesh": "./meshes/shoulder_pitch_r_link.STL"
+      },
+      {
+        "link": "shoulder_roll_r_link",
+        "kind": "visual",
+        "missing_mesh": "./meshes/shoulder_roll_r_link.STL"
+      },
+      {
+        "link": "shoulder_roll_r_link",
+        "kind": "collision",
+        "missing_mesh": "./meshes/shoulder_roll_r_link.STL"
+      },
+      {
+        "link": "shoulder_yaw_r_link",
+        "kind": "visual",
+        "missing_mesh": "./meshes/shoulder_yaw_r_link.STL"
+      },
+      {
+        "link": "shoulder_yaw_r_link",
+        "kind": "collision",
+        "missing_mesh": "./meshes/shoulder_yaw_r_link.STL"
+      },
+      {
+        "link": "elbow_pitch_r_link",
+        "kind": "visual",
+        "missing_mesh": "./meshes/elbow_pitch_r_link.STL"
+      },
+      {
+        "link": "elbow_pitch_r_link",
+        "kind": "collision",
+        "missing_mesh": "./meshes/elbow_pitch_r_link.STL"
+      },
+      {
+        "link": "elbow_yaw_r_link",
+        "kind": "visual",
+        "missing_mesh": "./meshes/elbow_yaw_r_link.STL"
+      },
+      {
+        "link": "elbow_yaw_r_link",
+        "kind": "collision",
+        "missing_mesh": "./meshes/elbow_yaw_r_link.STL"
+      },
+      {
+        "link": "wrist_pitch_r_link",
+        "kind": "visual",
+        "missing_mesh": "./meshes/wrist_pitch_r_link.STL"
+      },
+      {
+        "link": "wrist_pitch_r_link",
+        "kind": "collision",
+        "missing_mesh": "./meshes/wrist_pitch_r_link.STL"
+      },
+      {
+        "link": "wrist_roll_r_link",
+        "kind": "visual",
+        "missing_mesh": "./meshes/wrist_roll_r_link.STL"
+      },
+      {
+        "link": "wrist_roll_r_link",
+        "kind": "collision",
+        "missing_mesh": "./meshes/wrist_roll_r_link.STL"
+      },
+      {
+        "link": "camera_body_front_link",
+        "kind": "visual",
+        "missing_mesh": "./meshes/camera_body_front_link.STL"
+      },
+      {
+        "link": "camera_body_front_link",
+        "kind": "collision",
+        "missing_mesh": "./meshes/camera_body_front_link.STL"
+      },
+      {
+        "link": "camera_body_back_link",
+        "kind": "visual",
+        "missing_mesh": "./meshes/camera_body_back_link.STL"
+      },
+      {
+        "link": "camera_body_back_link",
+        "kind": "collision",
+        "missing_mesh": "./meshes/camera_body_back_link.STL"
+      }
+    ],
+    "collision_safety_validated": false
+  },
+  "dynamics_validation": {
+    "moving_links_checked": 33,
+    "mass_max_error_kg": 0.0,
+    "principal_inertia_max_error_kg_m2": 1.1102230246251565e-16,
+    "fixed_base_excluded": true,
+    "passed": true
+  },
+  "passed": false,
+  "scenarios": [
+    {
+      "name": "reachable",
+      "frames": 400,
+      "passed": true,
+      "checks": {
+        "hard_limits": true,
+        "velocity_limits": true,
+        "raw_solver_finite_and_in_limits": true,
+        "fault_stops_new_commands": true,
+        "limit_guard_rejects": true,
+        "uncontrolled_arm_holds": true,
+        "reachable_direction": true,
+        "reachable_position": true,
+        "reachable_orientation": true,
+        "control_compute_p99_under_deadline": true,
+        "pipeline_p99_under_deadline": true,
+        "realtime_period_p99": true,
+        "realtime_wake_p99": true
+      },
+      "accuracy_safety_passed": true,
+      "control_compute_passed": true,
+      "simulation_budget_passed": true,
+      "realtime_pacing_passed": true,
+      "scope": "solver-target + physics",
+      "startup": null,
+      "target_generation_in_pipeline": false,
+      "packet_decode_in_pipeline": false,
+      "viewer_hz": 20.0,
+      "deadline_missed": 0,
+      "hard_limit_violation_frames": 0,
+      "compute_budget_misses": 0,
+      "wall_period_ms": {
+        "p50": 10.000282083638012,
+        "p95": 10.02420651493594,
+        "p99": 10.035403880756348,
+        "max": 10.072743985801935
+      },
+      "wall_period_overruns": 0,
+      "wall_period_overrun_threshold_ms": 10.5,
+      "velocity_violation_frames": 0,
+      "command_rejections": 0,
+      "raw_solver_invalid_candidates": 0,
+      "peak_measured_velocity_rad_s": [
+        0.09404681242014626,
+        0.07060821720370966,
+        0.09403271728890253,
+        0.19596417255082166,
+        0.09389578563414834,
+        0.09439661302606608,
+        0.12536482942944038,
+        0.07840592046701667,
+        0.06275918566364258,
+        0.093969971698742,
+        0.17247735283102233,
+        0.09384933849357296,
+        0.09393036155846536,
+        0.12526909638519115
+      ],
+      "violation_sample_rate_hz": 400.0,
+      "uncontrolled_command_change_max_rad": 0.0,
+      "uncontrolled_measured_drift_max_rad": 0.0,
+      "fault_frames": 0,
+      "commands_during_fault": 0,
+      "position_error_m": {
+        "p50": 0.0036817671686131324,
+        "p95": 0.0045585179315563865,
+        "p99": 0.004578739542500304,
+        "max": 0.004579744887763183
+      },
+      "orientation_error_rad": {
+        "p50": 0.008514879647793324,
+        "p95": 0.010433122455679913,
+        "p99": 0.010477911904687331,
+        "max": 0.01047994767747671
+      },
+      "direction_error_rad": {
+        "p50": 0.006024197220492604,
+        "p95": 0.007450011838667977,
+        "p99": 0.007482450428299811,
+        "max": 0.0074836985787252825
+      },
+      "joint_tracking_error_rad": {
+        "p50": 0.00043287299302943727,
+        "p95": 0.0012207868033937029,
+        "p99": 0.0012300267473642711,
+        "max": 0.0012305509248696778
+      },
+      "steady_position_max_m": 0.0036817671686131324,
+      "steady_orientation_max_rad": 0.008514879647793324,
+      "timing": {
+        "solver_ms": {
+          "p50": 3.4704370191320777,
+          "p95": 4.300428729038686,
+          "p99": 4.756993748014793,
+          "max": 5.07998198736459
+        },
+        "mapper_ms": {
+          "p50": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "max": 0.0
+        },
+        "packet_decode_ms": {
+          "p50": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "max": 0.0
+        },
+        "control_compute_ms": {
+          "p50": 3.7464305642060935,
+          "p95": 4.6395281271543345,
+          "p99": 5.07836107746698,
+          "max": 5.485833971761167
+        },
+        "physics_ms": {
+          "p50": 2.4531774688512087,
+          "p95": 3.0606632411945593,
+          "p99": 3.4707457723561674,
+          "max": 3.598988987505436
+        },
+        "validation_observer_ms": {
+          "p50": 0.3599915071390569,
+          "p95": 0.5146666080690919,
+          "p99": 0.5539363552816211,
+          "max": 0.6447819760069251
+        },
+        "pipeline_ms": {
+          "p50": 6.597327010240406,
+          "p95": 7.973323651822281,
+          "p99": 8.900686722481622,
+          "max": 9.299489902332425
+        },
+        "pipeline_full_mapper_ms": {
+          "p50": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "max": 0.0
+        },
+        "target_generation_ms": {
+          "p50": 0.27699151542037725,
+          "p95": 0.3671681741252541,
+          "p99": 0.38898002821952105,
+          "max": 0.5329449195414782
+        },
+        "wake_lateness_ms": {
+          "p50": 0.06505649071186781,
+          "p95": 0.08868246804922816,
+          "p99": 0.09922884870320559,
+          "max": 0.10359205771237612
+        }
+      }
+    },
+    {
+      "name": "wrist_twist",
+      "frames": 400,
+      "passed": true,
+      "checks": {
+        "hard_limits": true,
+        "velocity_limits": true,
+        "raw_solver_finite_and_in_limits": true,
+        "fault_stops_new_commands": true,
+        "limit_guard_rejects": true,
+        "uncontrolled_arm_holds": true,
+        "reachable_direction": true,
+        "reachable_position": true,
+        "reachable_orientation": true,
+        "control_compute_p99_under_deadline": true,
+        "pipeline_p99_under_deadline": true,
+        "realtime_period_p99": true,
+        "realtime_wake_p99": true
+      },
+      "accuracy_safety_passed": true,
+      "control_compute_passed": true,
+      "simulation_budget_passed": true,
+      "realtime_pacing_passed": true,
+      "scope": "solver-target + physics",
+      "startup": null,
+      "target_generation_in_pipeline": false,
+      "packet_decode_in_pipeline": false,
+      "viewer_hz": 20.0,
+      "deadline_missed": 0,
+      "hard_limit_violation_frames": 0,
+      "compute_budget_misses": 0,
+      "wall_period_ms": {
+        "p50": 10.000347974710166,
+        "p95": 10.022180329542607,
+        "p99": 10.031543802469969,
+        "max": 10.059891967102885
+      },
+      "wall_period_overruns": 0,
+      "wall_period_overrun_threshold_ms": 10.5,
+      "velocity_violation_frames": 0,
+      "command_rejections": 0,
+      "raw_solver_invalid_candidates": 0,
+      "peak_measured_velocity_rad_s": [
+        4.363912762225331e-05,
+        2.9233063844960605e-05,
+        0.0002580543782013042,
+        1.3411259095263972e-05,
+        0.0004349408653374215,
+        0.18790556399407388,
+        0.3454575252803914,
+        9.573291005010804e-06,
+        2.2024219287309493e-05,
+        0.0002014657266992681,
+        4.479239147638092e-05,
+        0.00016724244241381886,
+        0.18786359475837427,
+        0.3456021556684188
+      ],
+      "violation_sample_rate_hz": 400.0,
+      "uncontrolled_command_change_max_rad": 0.0,
+      "uncontrolled_measured_drift_max_rad": 0.0,
+      "fault_frames": 0,
+      "commands_during_fault": 0,
+      "position_error_m": {
+        "p50": 0.0018652845622210011,
+        "p95": 0.0022628106863727777,
+        "p99": 0.0022820459495255293,
+        "max": 0.0022873760017888384
+      },
+      "orientation_error_rad": {
+        "p50": 0.008298265904699776,
+        "p95": 0.01005675923223676,
+        "p99": 0.010151874079226925,
+        "max": 0.01017612730890437
+      },
+      "direction_error_rad": {
+        "p50": 7.234852765610011e-05,
+        "p95": 8.372791293821841e-05,
+        "p99": 8.373505971462506e-05,
+        "max": 8.373957817798161e-05
+      },
+      "joint_tracking_error_rad": {
+        "p50": 0.0007799743475480356,
+        "p95": 0.002171199234822151,
+        "p99": 0.0021712341187481708,
+        "max": 0.002171243237467202
+      },
+      "steady_position_max_m": 0.0018652845622210011,
+      "steady_orientation_max_rad": 0.008298265904699776,
+      "timing": {
+        "solver_ms": {
+          "p50": 3.4978515468537807,
+          "p95": 4.456544743152335,
+          "p99": 4.807756857480854,
+          "max": 5.182193010114133
+        },
+        "mapper_ms": {
+          "p50": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "max": 0.0
+        },
+        "packet_decode_ms": {
+          "p50": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "max": 0.0
+        },
+        "control_compute_ms": {
+          "p50": 3.77859448781237,
+          "p95": 4.7815370780881485,
+          "p99": 5.0631431792862704,
+          "max": 5.53919596131891
+        },
+        "physics_ms": {
+          "p50": 2.510439546313137,
+          "p95": 3.032924147555604,
+          "p99": 3.5176582669373597,
+          "max": 3.677382948808372
+        },
+        "validation_observer_ms": {
+          "p50": 0.35986298462376,
+          "p95": 0.5523944564629346,
+          "p99": 0.577316734706983,
+          "max": 0.594286946579814
+        },
+        "pipeline_ms": {
+          "p50": 6.671094510238618,
+          "p95": 8.207359141670167,
+          "p99": 8.93148209899664,
+          "max": 9.254449047148228
+        },
+        "pipeline_full_mapper_ms": {
+          "p50": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "max": 0.0
+        },
+        "target_generation_ms": {
+          "p50": 0.27484598103910685,
+          "p95": 0.3455307218246162,
+          "p99": 0.40975654963403935,
+          "max": 0.544455018825829
+        },
+        "wake_lateness_ms": {
+          "p50": 0.0682660611346364,
+          "p95": 0.08871335303410884,
+          "p99": 0.09693970205262302,
+          "max": 0.11174601968377829
+        }
+      }
+    },
+    {
+      "name": "left_only",
+      "frames": 400,
+      "passed": true,
+      "checks": {
+        "hard_limits": true,
+        "velocity_limits": true,
+        "raw_solver_finite_and_in_limits": true,
+        "fault_stops_new_commands": true,
+        "limit_guard_rejects": true,
+        "uncontrolled_arm_holds": true,
+        "reachable_direction": true,
+        "reachable_position": true,
+        "reachable_orientation": true,
+        "control_compute_p99_under_deadline": true,
+        "pipeline_p99_under_deadline": true,
+        "realtime_period_p99": true,
+        "realtime_wake_p99": true
+      },
+      "accuracy_safety_passed": true,
+      "control_compute_passed": true,
+      "simulation_budget_passed": true,
+      "realtime_pacing_passed": true,
+      "scope": "solver-target + physics",
+      "startup": null,
+      "target_generation_in_pipeline": false,
+      "packet_decode_in_pipeline": false,
+      "viewer_hz": 20.0,
+      "deadline_missed": 0,
+      "hard_limit_violation_frames": 0,
+      "compute_budget_misses": 0,
+      "wall_period_ms": {
+        "p50": 10.000256006605923,
+        "p95": 10.034847550559789,
+        "p99": 10.04342733649537,
+        "max": 10.064367903396487
+      },
+      "wall_period_overruns": 0,
+      "wall_period_overrun_threshold_ms": 10.5,
+      "velocity_violation_frames": 0,
+      "command_rejections": 0,
+      "raw_solver_invalid_candidates": 0,
+      "peak_measured_velocity_rad_s": [
+        0.09404483943590305,
+        0.07059297747869149,
+        0.09404586537776041,
+        0.1959665748773034,
+        0.09391122401391519,
+        0.09441339293202772,
+        0.12519338354190634,
+        3.105166323061272e-05,
+        2.590073177447319e-05,
+        7.801291552013423e-05,
+        0.00028960387792643233,
+        0.00029222015833756804,
+        0.000420348110470703,
+        0.00022907868183408286
+      ],
+      "violation_sample_rate_hz": 400.0,
+      "uncontrolled_command_change_max_rad": 0.0,
+      "uncontrolled_measured_drift_max_rad": 1.976111611677704e-06,
+      "fault_frames": 0,
+      "commands_during_fault": 0,
+      "position_error_m": {
+        "p50": 0.0036613939151132376,
+        "p95": 0.0045175433317641575,
+        "p99": 0.004537658193283904,
+        "max": 0.00453861191407864
+      },
+      "orientation_error_rad": {
+        "p50": 0.007225523549347943,
+        "p95": 0.008816572425004346,
+        "p99": 0.008856944815704529,
+        "max": 0.008858895839627621
+      },
+      "direction_error_rad": {
+        "p50": 0.006024507440899827,
+        "p95": 0.007450045160861293,
+        "p99": 0.007482278291812098,
+        "max": 0.007483759601817865
+      },
+      "joint_tracking_error_rad": {
+        "p50": 0.00043287299302563476,
+        "p95": 0.0012209677063410474,
+        "p99": 0.0012300974648370654,
+        "max": 0.0012305963971694922
+      },
+      "steady_position_max_m": 0.0036613939151132376,
+      "steady_orientation_max_rad": 0.007225523549347943,
+      "timing": {
+        "solver_ms": {
+          "p50": 2.806391043122858,
+          "p95": 3.3766961423680186,
+          "p99": 3.8048447447363287,
+          "max": 4.100561025552452
+        },
+        "mapper_ms": {
+          "p50": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "max": 0.0
+        },
+        "packet_decode_ms": {
+          "p50": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "max": 0.0
+        },
+        "control_compute_ms": {
+          "p50": 3.146145027130842,
+          "p95": 3.7277668889146294,
+          "p99": 4.134828859241679,
+          "max": 4.490843042731285
+        },
+        "physics_ms": {
+          "p50": 2.8799794963561,
+          "p95": 3.5261989105492826,
+          "p99": 4.065630866680293,
+          "max": 4.382200073450804
+        },
+        "validation_observer_ms": {
+          "p50": 0.36392692709341645,
+          "p95": 0.5029855354223399,
+          "p99": 0.564720950787887,
+          "max": 0.7227899041026831
+        },
+        "pipeline_ms": {
+          "p50": 6.41972100129351,
+          "p95": 7.58062092354521,
+          "p99": 8.545599567005409,
+          "max": 9.324684971943498
+        },
+        "pipeline_full_mapper_ms": {
+          "p50": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "max": 0.0
+        },
+        "target_generation_ms": {
+          "p50": 0.26776897720992565,
+          "p95": 0.5467022943776101,
+          "p99": 0.572213405976072,
+          "max": 0.883170054294169
+        },
+        "wake_lateness_ms": {
+          "p50": 0.07439951878041029,
+          "p95": 0.10326093761250375,
+          "p99": 0.11404674267396328,
+          "max": 0.13298389967530966
+        }
+      }
+    },
+    {
+      "name": "near_limits",
+      "frames": 400,
+      "passed": true,
+      "checks": {
+        "hard_limits": true,
+        "velocity_limits": true,
+        "raw_solver_finite_and_in_limits": true,
+        "fault_stops_new_commands": true,
+        "limit_guard_rejects": true,
+        "uncontrolled_arm_holds": true,
+        "reachable_direction": true,
+        "reachable_position": true,
+        "reachable_orientation": true,
+        "control_compute_p99_under_deadline": true,
+        "pipeline_p99_under_deadline": true,
+        "realtime_period_p99": true,
+        "realtime_wake_p99": true
+      },
+      "accuracy_safety_passed": true,
+      "control_compute_passed": true,
+      "simulation_budget_passed": true,
+      "realtime_pacing_passed": true,
+      "scope": "solver-target + physics",
+      "startup": null,
+      "target_generation_in_pipeline": false,
+      "packet_decode_in_pipeline": false,
+      "viewer_hz": 20.0,
+      "deadline_missed": 3,
+      "hard_limit_violation_frames": 0,
+      "compute_budget_misses": 3,
+      "wall_period_ms": {
+        "p50": 10.000328999012709,
+        "p95": 10.02329436596483,
+        "p99": 10.035490051377565,
+        "max": 10.32451691571623
+      },
+      "wall_period_overruns": 0,
+      "wall_period_overrun_threshold_ms": 10.5,
+      "velocity_violation_frames": 0,
+      "command_rejections": 0,
+      "raw_solver_invalid_candidates": 0,
+      "peak_measured_velocity_rad_s": [
+        3.760274464959467e-05,
+        0.3056410976227747,
+        0.0006867620238583949,
+        2.797926967312847e-05,
+        0.0006889870954301935,
+        0.000373776238748319,
+        0.3455016068566931,
+        4.458258765113396e-05,
+        0.34560410627755944,
+        0.0007428169245602273,
+        3.3469508233546774e-05,
+        0.0008661652281511667,
+        5.0078793611560424e-05,
+        0.34562019945920247
+      ],
+      "violation_sample_rate_hz": 400.0,
+      "uncontrolled_command_change_max_rad": 0.0,
+      "uncontrolled_measured_drift_max_rad": 0.0,
+      "fault_frames": 0,
+      "commands_during_fault": 0,
+      "position_error_m": {
+        "p50": 0.05002615728564925,
+        "p95": 0.1450949887426036,
+        "p99": 0.14680495754638145,
+        "max": 0.14689096860237894
+      },
+      "orientation_error_rad": {
+        "p50": 0.18722732965373684,
+        "p95": 0.4551587966625344,
+        "p99": 0.45977420809686825,
+        "max": 0.4600410433267128
+      },
+      "direction_error_rad": {
+        "p50": 0.008237483179574083,
+        "p95": 0.08696313782176812,
+        "p99": 0.08844117901563582,
+        "max": 0.0885057321951167
+      },
+      "joint_tracking_error_rad": {
+        "p50": 0.0021711114181758584,
+        "p95": 0.002171278058378262,
+        "p99": 0.0021713066921430465,
+        "max": 0.002171312533025549
+      },
+      "steady_position_max_m": 0.04392165310765835,
+      "steady_orientation_max_rad": 0.1804972065027991,
+      "timing": {
+        "solver_ms": {
+          "p50": 3.44222248531878,
+          "p95": 4.518638353329151,
+          "p99": 5.104205070529132,
+          "max": 5.530472029931843
+        },
+        "mapper_ms": {
+          "p50": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "max": 0.0
+        },
+        "packet_decode_ms": {
+          "p50": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "max": 0.0
+        },
+        "control_compute_ms": {
+          "p50": 3.7216439959593117,
+          "p95": 4.885606170864775,
+          "p99": 5.501030960585922,
+          "max": 5.8553729904815555
+        },
+        "physics_ms": {
+          "p50": 2.6270364178344607,
+          "p95": 3.579263814026489,
+          "p99": 3.8771251204889263,
+          "max": 4.049915005452931
+        },
+        "validation_observer_ms": {
+          "p50": 0.3623184747993946,
+          "p95": 0.5488758033607154,
+          "p99": 0.5927101208362727,
+          "max": 0.7269170600920916
+        },
+        "pipeline_ms": {
+          "p50": 6.74889498623088,
+          "p95": 8.761991676874455,
+          "p99": 9.218681911006568,
+          "max": 10.320249944925308
+        },
+        "pipeline_full_mapper_ms": {
+          "p50": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "max": 0.0
+        },
+        "target_generation_ms": {
+          "p50": 0.2819984802044928,
+          "p95": 0.362540315836668,
+          "p99": 0.385604933835566,
+          "max": 0.6006769835948944
+        },
+        "wake_lateness_ms": {
+          "p50": 0.06544904317706823,
+          "p95": 0.08721683989278971,
+          "p99": 0.0957146845757961,
+          "max": 0.6712790345773101
+        }
+      }
+    },
+    {
+      "name": "unreachable",
+      "frames": 400,
+      "passed": true,
+      "checks": {
+        "hard_limits": true,
+        "velocity_limits": true,
+        "raw_solver_finite_and_in_limits": true,
+        "fault_stops_new_commands": true,
+        "limit_guard_rejects": true,
+        "uncontrolled_arm_holds": true,
+        "reachable_direction": true,
+        "reachable_position": true,
+        "reachable_orientation": true,
+        "control_compute_p99_under_deadline": true,
+        "pipeline_p99_under_deadline": true,
+        "realtime_period_p99": true,
+        "realtime_wake_p99": true
+      },
+      "accuracy_safety_passed": true,
+      "control_compute_passed": true,
+      "simulation_budget_passed": true,
+      "realtime_pacing_passed": true,
+      "scope": "solver-target + physics",
+      "startup": null,
+      "target_generation_in_pipeline": false,
+      "packet_decode_in_pipeline": false,
+      "viewer_hz": 20.0,
+      "deadline_missed": 0,
+      "hard_limit_violation_frames": 0,
+      "compute_budget_misses": 0,
+      "wall_period_ms": {
+        "p50": 9.999983012676239,
+        "p95": 10.026173817459494,
+        "p99": 10.033353422768414,
+        "max": 10.062988032586873
+      },
+      "wall_period_overruns": 0,
+      "wall_period_overrun_threshold_ms": 10.5,
+      "velocity_violation_frames": 0,
+      "command_rejections": 0,
+      "raw_solver_invalid_candidates": 0,
+      "peak_measured_velocity_rad_s": [
+        0.34558763227305467,
+        0.3456037170170688,
+        0.3456114924299756,
+        0.3457953417068079,
+        0.3456459630624465,
+        0.34660925736874304,
+        0.34594489379720383,
+        0.345744310194753,
+        0.34568741082255694,
+        0.34559858487091955,
+        0.34564383988403713,
+        0.3456336492319234,
+        0.3456668751052007,
+        0.34611535403386984
+      ],
+      "violation_sample_rate_hz": 400.0,
+      "uncontrolled_command_change_max_rad": 0.0,
+      "uncontrolled_measured_drift_max_rad": 0.0,
+      "fault_frames": 0,
+      "commands_during_fault": 0,
+      "position_error_m": {
+        "p50": 2.352717679480259,
+        "p95": 2.820923519500134,
+        "p99": 2.8702350476511,
+        "max": 2.882191411091743
+      },
+      "orientation_error_rad": {
+        "p50": 0.9057385094695669,
+        "p95": 1.5499784552501152,
+        "p99": 1.5519579482899812,
+        "max": 1.5519579482899812
+      },
+      "direction_error_rad": {
+        "p50": 2.073155734093369,
+        "p95": 2.5847865933331384,
+        "p99": 2.6387068648529652,
+        "max": 2.6521384314458722
+      },
+      "joint_tracking_error_rad": {
+        "p50": 0.002171115202055096,
+        "p95": 0.002173790034521525,
+        "p99": 0.002174201067740476,
+        "max": 0.0021851331632718185
+      },
+      "steady_position_max_m": 2.3450751882408873,
+      "steady_orientation_max_rad": 1.5519579482899812,
+      "timing": {
+        "solver_ms": {
+          "p50": 3.341217525303364,
+          "p95": 4.464965814258903,
+          "p99": 5.023318451130762,
+          "max": 5.427835043519735
+        },
+        "mapper_ms": {
+          "p50": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "max": 0.0
+        },
+        "packet_decode_ms": {
+          "p50": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "max": 0.0
+        },
+        "control_compute_ms": {
+          "p50": 3.6220475449226797,
+          "p95": 4.790372523711994,
+          "p99": 5.3096642147284,
+          "max": 5.802077008411288
+        },
+        "physics_ms": {
+          "p50": 2.7025570161640644,
+          "p95": 3.399089659797026,
+          "p99": 3.8587424450088292,
+          "max": 3.974068909883499
+        },
+        "validation_observer_ms": {
+          "p50": 0.3614284796640277,
+          "p95": 0.5191350006498395,
+          "p99": 0.5769911396782844,
+          "max": 0.8440370438620448
+        },
+        "pipeline_ms": {
+          "p50": 6.669801543466747,
+          "p95": 8.698169921990482,
+          "p99": 9.157977984286845,
+          "max": 9.644567035138607
+        },
+        "pipeline_full_mapper_ms": {
+          "p50": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "max": 0.0
+        },
+        "target_generation_ms": {
+          "p50": 0.2907880116254091,
+          "p95": 0.39371754392050207,
+          "p99": 0.4810864233877509,
+          "max": 0.6095051066949964
+        },
+        "wake_lateness_ms": {
+          "p50": 0.06767601007595658,
+          "p95": 0.09205656242556866,
+          "p99": 0.09814354125410317,
+          "max": 0.10389392264187336
+        }
+      }
+    },
+    {
+      "name": "tracking_loss",
+      "frames": 400,
+      "passed": true,
+      "checks": {
+        "hard_limits": true,
+        "velocity_limits": true,
+        "raw_solver_finite_and_in_limits": true,
+        "fault_stops_new_commands": true,
+        "limit_guard_rejects": true,
+        "uncontrolled_arm_holds": true,
+        "reachable_direction": true,
+        "reachable_position": true,
+        "reachable_orientation": true,
+        "control_compute_p99_under_deadline": true,
+        "pipeline_p99_under_deadline": true,
+        "realtime_period_p99": true,
+        "realtime_wake_p99": true
+      },
+      "accuracy_safety_passed": true,
+      "control_compute_passed": true,
+      "simulation_budget_passed": true,
+      "realtime_pacing_passed": true,
+      "scope": "solver-target + physics",
+      "startup": null,
+      "target_generation_in_pipeline": false,
+      "packet_decode_in_pipeline": false,
+      "viewer_hz": 20.0,
+      "deadline_missed": 1,
+      "hard_limit_violation_frames": 0,
+      "compute_budget_misses": 1,
+      "wall_period_ms": {
+        "p50": 9.999893954955041,
+        "p95": 10.028362495359033,
+        "p99": 10.045231841504574,
+        "max": 11.830290080979466
+      },
+      "wall_period_overruns": 1,
+      "wall_period_overrun_threshold_ms": 10.5,
+      "velocity_violation_frames": 0,
+      "command_rejections": 0,
+      "raw_solver_invalid_candidates": 0,
+      "peak_measured_velocity_rad_s": [
+        0.34554595622003004,
+        0.3456019215245292,
+        0.34558431912130616,
+        0.34560000000000196,
+        0.3455783088136382,
+        0.346317821466211,
+        0.34548054976075904,
+        0.3455929063683581,
+        0.3456024652888113,
+        0.3455982911154324,
+        0.34560277214701585,
+        0.3456001314538448,
+        0.34560028839532164,
+        0.3456038798034158
+      ],
+      "violation_sample_rate_hz": 400.0,
+      "uncontrolled_command_change_max_rad": 0.0,
+      "uncontrolled_measured_drift_max_rad": 0.0,
+      "fault_frames": 140,
+      "commands_during_fault": 0,
+      "position_error_m": {
+        "p50": 0.0036817761591381687,
+        "p95": 0.13668697337298213,
+        "p99": 0.1401846373527965,
+        "max": 0.14035195558491112
+      },
+      "orientation_error_rad": {
+        "p50": 0.008514902050079867,
+        "p95": 0.30806233893642454,
+        "p99": 0.31601546193374824,
+        "max": 0.3163960451782441
+      },
+      "direction_error_rad": {
+        "p50": 0.006030511537987911,
+        "p95": 0.22428822388125563,
+        "p99": 0.23009086257891218,
+        "max": 0.23036855231381317
+      },
+      "joint_tracking_error_rad": {
+        "p50": 8.123579640924306e-06,
+        "p95": 0.0021730311043844626,
+        "p99": 0.0021733467237782457,
+        "max": 0.0022028999192830745
+      },
+      "steady_position_max_m": 0.0036817671686131324,
+      "steady_orientation_max_rad": 0.008514879647793324,
+      "timing": {
+        "solver_ms": {
+          "p50": 3.355743014253676,
+          "p95": 4.199605184840038,
+          "p99": 4.7438747191336,
+          "max": 6.4041269943118095
+        },
+        "mapper_ms": {
+          "p50": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "max": 0.0
+        },
+        "packet_decode_ms": {
+          "p50": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "max": 0.0
+        },
+        "control_compute_ms": {
+          "p50": 3.6522619775496423,
+          "p95": 4.50285889673978,
+          "p99": 5.153028211789205,
+          "max": 6.825653021223843
+        },
+        "physics_ms": {
+          "p50": 2.585561014711857,
+          "p95": 5.641687917523083,
+          "p99": 6.1614768963772795,
+          "max": 6.733026937581599
+        },
+        "validation_observer_ms": {
+          "p50": 0.3934010164812207,
+          "p95": 0.7868670742027459,
+          "p99": 0.8865983120631425,
+          "max": 1.0064799571409822
+        },
+        "pipeline_ms": {
+          "p50": 6.474165944382548,
+          "p95": 7.669796724803745,
+          "p99": 9.028108008205889,
+          "max": 11.824868037365377
+        },
+        "pipeline_full_mapper_ms": {
+          "p50": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "max": 0.0
+        },
+        "target_generation_ms": {
+          "p50": 0.25755801470950246,
+          "p95": 0.42517441324889643,
+          "p99": 0.48870995990000665,
+          "max": 0.59665204025805
+        },
+        "wake_lateness_ms": {
+          "p50": 0.07392553379759192,
+          "p95": 0.0945321808103472,
+          "p99": 0.1058558863587676,
+          "max": 1.8731470918282866
+        }
+      }
+    },
+    {
+      "name": "limit_guard",
+      "frames": 400,
+      "passed": true,
+      "checks": {
+        "hard_limits": true,
+        "velocity_limits": true,
+        "raw_solver_finite_and_in_limits": true,
+        "fault_stops_new_commands": true,
+        "limit_guard_rejects": true,
+        "uncontrolled_arm_holds": true,
+        "reachable_direction": true,
+        "reachable_position": true,
+        "reachable_orientation": true,
+        "control_compute_p99_under_deadline": true,
+        "pipeline_p99_under_deadline": true,
+        "realtime_period_p99": true,
+        "realtime_wake_p99": true
+      },
+      "accuracy_safety_passed": true,
+      "control_compute_passed": true,
+      "simulation_budget_passed": true,
+      "realtime_pacing_passed": true,
+      "scope": "solver-target + physics",
+      "startup": null,
+      "target_generation_in_pipeline": false,
+      "packet_decode_in_pipeline": false,
+      "viewer_hz": 20.0,
+      "deadline_missed": 0,
+      "hard_limit_violation_frames": 0,
+      "compute_budget_misses": 0,
+      "wall_period_ms": {
+        "p50": 10.00015705358237,
+        "p95": 10.028335906099528,
+        "p99": 10.044720084406435,
+        "max": 10.060144937597215
+      },
+      "wall_period_overruns": 0,
+      "wall_period_overrun_threshold_ms": 10.5,
+      "velocity_violation_frames": 0,
+      "command_rejections": 120,
+      "raw_solver_invalid_candidates": 0,
+      "peak_measured_velocity_rad_s": [
+        0.3455425487520745,
+        0.34560172627907026,
+        0.3455844041387264,
+        0.34560000000000196,
+        0.34557592441237883,
+        0.3462802383703188,
+        0.34546529790062713,
+        0.3455919040221247,
+        0.34560239760536815,
+        0.34559796762066486,
+        0.3456028055257351,
+        0.34560014711069237,
+        0.3456003219834449,
+        0.3456036276892227
+      ],
+      "violation_sample_rate_hz": 400.0,
+      "uncontrolled_command_change_max_rad": 0.0,
+      "uncontrolled_measured_drift_max_rad": 0.0,
+      "fault_frames": 0,
+      "commands_during_fault": 0,
+      "position_error_m": {
+        "p50": 0.0036817671686131324,
+        "p95": 0.10775958450625531,
+        "p99": 0.11126638493250693,
+        "max": 0.11143414688183327
+      },
+      "orientation_error_rad": {
+        "p50": 0.008514879647793324,
+        "p95": 0.24288302576536905,
+        "p99": 0.2508366855642426,
+        "max": 0.2512172948028996
+      },
+      "direction_error_rad": {
+        "p50": 0.006024197220492604,
+        "p95": 0.17686721475080508,
+        "p99": 0.18267091624498555,
+        "max": 0.18294865753587883
+      },
+      "joint_tracking_error_rad": {
+        "p50": 7.843988738001628e-06,
+        "p95": 0.002172575443293641,
+        "p99": 0.002173342170026823,
+        "max": 0.0022075100355742616
+      },
+      "steady_position_max_m": 0.0036817671686131324,
+      "steady_orientation_max_rad": 0.008514879647793324,
+      "timing": {
+        "solver_ms": {
+          "p50": 3.543221508152783,
+          "p95": 4.555321257794276,
+          "p99": 4.880906314356252,
+          "max": 5.118279019370675
+        },
+        "mapper_ms": {
+          "p50": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "max": 0.0
+        },
+        "packet_decode_ms": {
+          "p50": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "max": 0.0
+        },
+        "control_compute_ms": {
+          "p50": 3.7783904699608684,
+          "p95": 4.8608203302137545,
+          "p99": 5.347998215584084,
+          "max": 5.485220928676426
+        },
+        "physics_ms": {
+          "p50": 2.481789037119597,
+          "p95": 3.078458312666042,
+          "p99": 3.728035517269745,
+          "max": 4.026058013550937
+        },
+        "validation_observer_ms": {
+          "p50": 0.3712500329129398,
+          "p95": 0.5067084392067045,
+          "p99": 0.5591388512402773,
+          "max": 0.5830320296809077
+        },
+        "pipeline_ms": {
+          "p50": 6.626057962421328,
+          "p95": 8.516273752320556,
+          "p99": 9.21018888708204,
+          "max": 9.260826976969838
+        },
+        "pipeline_full_mapper_ms": {
+          "p50": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "max": 0.0
+        },
+        "target_generation_ms": {
+          "p50": 0.2744710072875023,
+          "p95": 0.4749948100652545,
+          "p99": 0.49032009672373533,
+          "max": 1.6283809673041105
+        },
+        "wake_lateness_ms": {
+          "p50": 0.07384654600173235,
+          "p95": 0.09364772122353314,
+          "p99": 0.10067158145830032,
+          "max": 0.11880404781550169
+        }
+      }
+    },
+    {
+      "name": "mocap_end_to_end",
+      "frames": 400,
+      "passed": false,
+      "checks": {
+        "hard_limits": true,
+        "velocity_limits": true,
+        "raw_solver_finite_and_in_limits": true,
+        "fault_stops_new_commands": true,
+        "limit_guard_rejects": true,
+        "uncontrolled_arm_holds": true,
+        "reachable_direction": true,
+        "reachable_position": true,
+        "reachable_orientation": true,
+        "control_compute_p99_under_deadline": true,
+        "pipeline_p99_under_deadline": false,
+        "realtime_period_p99": false,
+        "realtime_wake_p99": false
+      },
+      "accuracy_safety_passed": true,
+      "control_compute_passed": true,
+      "simulation_budget_passed": false,
+      "realtime_pacing_passed": false,
+      "scope": "64-node encode/decode + startup gate + mapper + IK + physics",
+      "startup": {
+        "passed": true,
+        "held_seconds": 2.0,
+        "window_frames": 201,
+        "metrics": {
+          "left_upper_vertical_cosine": 0.9446561932608544,
+          "left_forearm_vertical_cosine": 0.9830568088316898,
+          "left_wrist_drop_m": 0.6459758877754211,
+          "left_lateral_offset_m": 0.13238859176635742,
+          "right_upper_vertical_cosine": 0.9446561932608544,
+          "right_forearm_vertical_cosine": 0.9830568088316898,
+          "right_wrist_drop_m": 0.6459758877754211,
+          "right_lateral_offset_m": 0.13238859176635742,
+          "left_home_rms_m": 0.0,
+          "right_home_rms_m": 0.0,
+          "robot_joint_span_rad": 1.2502206301473473e-18
+        }
+      },
+      "target_generation_in_pipeline": false,
+      "packet_decode_in_pipeline": true,
+      "viewer_hz": 20.0,
+      "deadline_missed": 49,
+      "hard_limit_violation_frames": 0,
+      "compute_budget_misses": 49,
+      "wall_period_ms": {
+        "p50": 10.00013796146959,
+        "p95": 10.701883269939568,
+        "p99": 11.550867487676442,
+        "max": 11.605267063714564
+      },
+      "wall_period_overruns": 29,
+      "wall_period_overrun_threshold_ms": 10.5,
+      "velocity_violation_frames": 0,
+      "command_rejections": 0,
+      "raw_solver_invalid_candidates": 0,
+      "peak_measured_velocity_rad_s": [
+        0.09399440257581954,
+        0.0704902864961677,
+        0.09541558617613734,
+        0.19596467376471607,
+        0.0952708803962254,
+        0.09486479126724925,
+        0.1251735175503163,
+        0.07838638027849124,
+        0.06262830826995996,
+        0.09563967256164049,
+        0.17245832020848806,
+        0.09553079659354397,
+        0.09394302154009068,
+        0.12510884980755063
+      ],
+      "violation_sample_rate_hz": 400.0,
+      "uncontrolled_command_change_max_rad": 0.0,
+      "uncontrolled_measured_drift_max_rad": 0.0,
+      "fault_frames": 0,
+      "commands_during_fault": 0,
+      "position_error_m": {
+        "p50": 0.003638226235649928,
+        "p95": 0.004489189336902921,
+        "p99": 0.004509589931401516,
+        "max": 0.004510661372776871
+      },
+      "orientation_error_rad": {
+        "p50": 0.008161454030694758,
+        "p95": 0.009980817617367901,
+        "p99": 0.010025781083712899,
+        "max": 0.01002829154655378
+      },
+      "direction_error_rad": {
+        "p50": 0.005927793840720224,
+        "p95": 0.0073207678383491225,
+        "p99": 0.0073533071069349296,
+        "max": 0.007354837217447636
+      },
+      "joint_tracking_error_rad": {
+        "p50": 0.0004328770339162291,
+        "p95": 0.0012207737200716745,
+        "p99": 0.0012300412300991432,
+        "max": 0.0012305540722268304
+      },
+      "steady_position_max_m": 0.003638236836712549,
+      "steady_orientation_max_rad": 0.008161454338648552,
+      "timing": {
+        "solver_ms": {
+          "p50": 3.2625339808873832,
+          "p95": 4.566058481577784,
+          "p99": 5.014960118569434,
+          "max": 5.227143061347306
+        },
+        "mapper_ms": {
+          "p50": 4.645897541195154,
+          "p95": 6.341800198424606,
+          "p99": 6.823112303391099,
+          "max": 7.168550044298172
+        },
+        "packet_decode_ms": {
+          "p50": 0.5115575040690601,
+          "p95": 0.7751208380796015,
+          "p99": 0.8585844538174568,
+          "max": 1.0275519452989101
+        },
+        "control_compute_ms": {
+          "p50": 5.42800547555089,
+          "p95": 7.333183870650828,
+          "p99": 7.774274719413369,
+          "max": 8.071518037468195
+        },
+        "physics_ms": {
+          "p50": 2.428170992061496,
+          "p95": 3.100055526010692,
+          "p99": 3.6659595603123307,
+          "max": 4.187253070995212
+        },
+        "validation_observer_ms": {
+          "p50": 0.345797510817647,
+          "p95": 0.5510300863534212,
+          "p99": 0.5849710002075881,
+          "max": 0.7868950488045812
+        },
+        "pipeline_ms": {
+          "p50": 8.231520478148013,
+          "p95": 10.692963533801953,
+          "p99": 11.547156950691715,
+          "max": 11.601021979004145
+        },
+        "pipeline_full_mapper_ms": {
+          "p50": 8.231520478148013,
+          "p95": 10.692963533801953,
+          "p99": 11.547156950691715,
+          "max": 11.601021979004145
+        },
+        "target_generation_ms": {
+          "p50": 3.708000003825873,
+          "p95": 4.127707437146455,
+          "p99": 5.779950056457892,
+          "max": 5.852815927937627
+        },
+        "wake_lateness_ms": {
+          "p50": 0.08399283979088068,
+          "p95": 3.73866523732431,
+          "p99": 8.655969750834627,
+          "max": 10.572250932455063
+        }
+      }
+    }
+  ],
+  "accuracy_safety_passed": true,
+  "control_compute_passed": true,
+  "simulation_budget_passed": false,
+  "realtime_pacing_passed": false,
+  "scope": "7 solver-target scenes and 1 synthetic 64-node protocol/startup/full-mapper scene; excludes ROS/network/SDK",
+  "mocap_fixture": {
+    "human_upper_arm_m": 0.33,
+    "human_forearm_m": 0.34,
+    "unused_finger_leg_nodes": "zero position/quaternion, explicitly untracked",
+    "body_motion": "synthetic translation and yaw removed by actual body-relative mapper"
+  },
+  "limitations": [
+    "missing meshes replaced by 35mm spheres",
+    "self-collision disabled; no collision-safety claim",
+    "URDF inertia/effort/velocity retained; motor gains are simulated, not identified hardware",
+    "timings exclude startup/rendering and synthetic device input preparation; protocol decode/body mapping/IK/physics stay in full-mapper pipeline",
+    "tracking loss is simulation input fault injection, not a ROS bridge integration test",
+    "full mapper fixture validates upper body only, with unused nodes marked untracked, not a hand SDK/full-body test"
+  ],
+  "runtime_metadata": {
+    "python": "3.12.16",
+    "platform": "Linux-7.0.0-42-generic-x86_64-with-glibc2.43",
+    "cpu_model": "Intel(R) Xeon(R) CPU E5-2690 v4 @ 2.60GHz",
+    "logical_cpu_count": 28,
+    "package_versions": {
+      "numpy": "2.3.5",
+      "scipy": "1.18.1",
+      "pin": "3.7.0",
+      "pybullet": "3.2.7",
+      "threadpoolctl": "3.8.0"
+    },
+    "source_sha256": {
+      "app/src/teleop_simulation.py": "fbe3b72d9f980cadb17b303eeefcb031b3ab7f2de2018a6a8f4433f5d9fa760f",
+      "app/src/teleop_ik_core.py": "42ca98bfd5f299ac80662e24b9874743a097d83a6357ec8d6a729fd23bbcbf18",
+      "app/src/teleop_skeleton_retarget.py": "34642a6b3f250509c0b21dd8d385e1004d94c5bc16d699c660f1e7cbaea1699e"
+    },
+    "added_after_measurement": true,
+    "source_note": "Only metadata/report helpers changed after measurement; sampled control loop unchanged."
+  },
+  "report_derivation": {
+    "machine_paths_removed_only": true,
+    "numeric_results_unchanged": true,
+    "raw_report": "user outputs: simulation-validation/metrics.json"
+  }
+}

@@ -5,6 +5,7 @@ import argparse
 import copy
 import importlib.util
 import json
+import math
 import os
 import socket
 import struct
@@ -34,6 +35,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "python": None,
         "conda_env": None,
         "pause_after_action": True,
+        "blas_threads": 1,
     },
     "rosbridge": {
         "host": "192.168.1.110",
@@ -110,7 +112,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "control_mode": "skeleton",
         "ik_backend": "teleop_dls",
         "ik_task": "pose",
-        "rate": 10.0,
+        "rate": 100.0,
+        "max_joint_velocity": 0.48,
+        "hand_control_rate": 20.0,
+        "max_hand_velocity": 1.0,
         "max_frames": 200,
         "stride": 1,
         "position_scale": 1.0,
@@ -168,7 +173,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "position_scale": 1.0,
         "orientation_scale": 1.0,
         "safe_teleop": True,
-        "safe_rate": 8.0,
+        "control_rate": 100.0,
+        "safe_rate": 100.0,
+        "max_joint_velocity": 0.48,
+        "hand_control_rate": 20.0,
+        "max_hand_velocity": 1.0,
+        "log_rate": 1.0,
         "max_joint_delta_per_step": 0.06,
         "max_command_delta_from_baseline": 1.4,
         "startup_hold_seconds": 2.0,
@@ -187,6 +197,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "direction_iterations": 6,
         "robot_command": False,
         "hand_only": False,
+    },
+    "simulation": {
+        "output": "data/simulation",
+        "control_hz": 100.0,
+        "physics_substeps": 4,
+        "duration": 4.0,
+        "profile": "skeleton-100hz",
+        "max_joint_velocity": 0.48,
     },
     "hand_ik": {
         "compute": True,
@@ -314,6 +332,35 @@ def append_hand_ik_cli(command: list[str], args: argparse.Namespace) -> None:
         command.extend(("--hand-ik-diagnostic-csv", str(args.hand_ik_diagnostic_csv)))
 
 
+def add_timing_args(parser: argparse.ArgumentParser, *, live: bool) -> None:
+    parser.add_argument("--max-joint-velocity", type=float, default=None, help="关节角速度上限 rad/s，同时受 URDF 限制")
+    parser.add_argument("--hand-control-rate", type=float, default=None, help="独立手部计算/控制频率，默认 20Hz")
+    parser.add_argument("--max-hand-velocity", type=float, default=None, help="手部归一化通道每秒最大变化")
+    if live:
+        parser.add_argument("--control-rate", type=float, default=None, help="手臂计算周期 Hz，默认 100")
+        parser.add_argument("--log-rate", type=float, default=None, help="例行帧日志频率 Hz，0 关闭；故障仍立即记录")
+
+
+def apply_timing_config(args: argparse.Namespace, config: dict[str, Any], section: str) -> None:
+    keys = {"max_joint_velocity": 0.48, "hand_control_rate": 20.0, "max_hand_velocity": 1.0}
+    if section == "teleop":
+        keys.update(control_rate=100.0, log_rate=1.0)
+    for key, fallback in keys.items():
+        value = coalesce(getattr(args, key, None), config.get(section, {}).get(key, fallback))
+        value = float(value)
+        if not math.isfinite(value) or value < 0 or (key != "log_rate" and value == 0):
+            raise ValueError(f"{key} 必须为有限的有效频率/速度")
+        setattr(args, key, value)
+
+
+def append_timing_cli(command: list[str], args: argparse.Namespace, *, live: bool) -> None:
+    fields = {"max_joint_velocity": 0.48, "hand_control_rate": 20.0, "max_hand_velocity": 1.0}
+    if live:
+        fields.update(control_rate=100.0, log_rate=1.0)
+    for name, fallback in fields.items():
+        command.extend(("--" + name.replace("_", "-"), str(getattr(args, name, fallback))))
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="IK 工程统一启动入口：参数从 run_ik_config.json 读取，CLI 只负责选择功能",
@@ -321,6 +368,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", type=Path, default=CONFIG_PATH, help="启动配置文件路径")
     parser.add_argument("--python", default=None, help="覆盖配置里的 runtime.python")
     parser.add_argument("--conda-env", default=None, help="覆盖配置里的 runtime.conda_env")
+    parser.add_argument("--blas-threads", type=int, default=None, help="小矩阵 IK 的 BLAS 线程数，默认 1")
     parser.add_argument("--no-pause", action="store_true", default=None, help="菜单动作结束后不等待回车")
 
     subparsers = parser.add_subparsers(dest="command", required=False)
@@ -355,6 +403,16 @@ def parse_args() -> argparse.Namespace:
     test_parser = subparsers.add_parser("test", help="执行编译检查和最小 UDP 数采自测")
     test_parser.add_argument("--port", type=int, default=None, help="自测使用的本机 UDP 端口")
     test_parser.add_argument("--output", type=Path, default=None, help="自测输出目录")
+
+    simulation_parser = subparsers.add_parser("simulate", help="基于机器人 URDF 的独立 PyBullet IK 仿真，无需 ROS/机器人")
+    simulation_parser.add_argument("--output", type=Path, default=None)
+    simulation_parser.add_argument("--control-hz", type=float, default=None)
+    simulation_parser.add_argument("--physics-substeps", type=int, default=None)
+    simulation_parser.add_argument("--duration", type=float, default=None, help="每场景仿真秒数")
+    simulation_parser.add_argument("--profile", choices=("skeleton-current", "skeleton-100hz"), default=None)
+    simulation_parser.add_argument("--realtime", action="store_true", help="按真实墙钟节拍运行并测量调度")
+    simulation_parser.add_argument("--scenario", action="append", choices=("reachable", "wrist_twist", "left_only", "near_limits", "unreachable", "tracking_loss", "limit_guard", "mocap_end_to_end"), help="只运行指定场景，可重复传入")
+    simulation_parser.add_argument("--max-joint-velocity", type=float, default=None, help="仿真操作速度上限 rad/s，默认 0.48")
 
     visualize_parser = subparsers.add_parser("visualize", help="从遥操作日志生成离线关节角曲线")
     visualize_parser.add_argument("input", nargs="?", type=Path, default=ROOT_DIR / "data" / "logs" / "mocap_ik_bridge.log", help="遥操作日志或纯 JSONL")
@@ -392,6 +450,7 @@ def parse_args() -> argparse.Namespace:
     teleop_parser.add_argument("--max-joint-delta-per-step", type=float, default=None, help="实时遥操作单次下发最大关节变化")
     teleop_parser.add_argument("--max-command-delta-from-baseline", type=float, default=None, help="实时遥操作相对启动姿态的最大关节偏移")
     add_teleop_startup_args(teleop_parser)
+    add_timing_args(teleop_parser, live=True)
     add_skeleton_retarget_args(teleop_parser)
     add_hand_ik_launcher_args(teleop_parser)
     teleop_parser.add_argument("--robot-command", choices=("true", "false"), default=None, help="是否向 /arm/cmd_pos 下发命令")
@@ -430,7 +489,7 @@ def parse_args() -> argparse.Namespace:
     replay_parser.add_argument("--control-mode", choices=("skeleton", "direct", "ik", "raise_template"), default=None, help="skeleton=默认骨架自动映射；direct/ik/raise_template=legacy 高级兼容")
     replay_parser.add_argument("--ik-backend", choices=("teleop_dls", "tiangong2pro_official", "ubtech_casadi"), default=None, help="IK 求解后端")
     replay_parser.add_argument("--ik-task", choices=("pose", "position_only"), default=None, help="IK 任务类型：pose=官方完整 TCP 位姿 IK；position_only=实验性锁腕位置 IK")
-    replay_parser.add_argument("--rate", type=float, default=None, help="回放频率")
+    replay_parser.add_argument("--rate", "--control-rate", type=float, default=None, help="回放频率，默认 100Hz")
     replay_parser.add_argument("--max-frames", type=int, default=None, help="最多回放/预览多少帧")
     replay_parser.add_argument("--stride", type=int, default=None, help="按帧间隔抽样")
     replay_parser.add_argument("--position-scale", type=float, default=None, help="骨段方向映射增益，默认 1.0；legacy ik 中表示位置增益")
@@ -444,6 +503,7 @@ def parse_args() -> argparse.Namespace:
     replay_parser.add_argument("--max-command-delta-from-baseline", type=float, default=None, help="相对 baseline 的最大关节偏移")
     add_skeleton_retarget_args(replay_parser)
     add_teleop_startup_args(replay_parser)
+    add_timing_args(replay_parser, live=False)
     add_hand_ik_launcher_args(replay_parser)
     replay_parser.add_argument("--spd", type=float, default=None, help="电机速度参数")
     replay_parser.add_argument("--cur", type=float, default=None, help="电机电流参数")
@@ -512,6 +572,15 @@ def apply_config(args: argparse.Namespace) -> argparse.Namespace:
     args.config = config_path
     args.launcher_config = config
 
+    threads = coalesce(getattr(args, "blas_threads", None), config["runtime"].get("blas_threads", 1))
+    if isinstance(threads, bool) or int(threads) != threads or int(threads) < 1:
+        raise ValueError("blas_threads 必须为正整数")
+    args.blas_threads = int(threads)
+    # The launcher is stdlib-only; child NumPy/Pinocchio imports see these caps.
+    # This changes this process and its children, not the system environment.
+    for variable in ("OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "OMP_NUM_THREADS", "BLIS_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+        os.environ[variable] = str(args.blas_threads)
+
     args.python = coalesce(args.python, cfg_get(config, "runtime", "python")) or sys.executable
     args.conda_env = coalesce(args.conda_env, cfg_get(config, "runtime", "conda_env"))
     if args.no_pause is None:
@@ -533,6 +602,15 @@ def apply_config(args: argparse.Namespace) -> argparse.Namespace:
     if command == "test":
         args.port = coalesce(args.port, cfg_get(config, "environment", "self_test_port"))
         args.output = resolve_path(coalesce(args.output, cfg_get(config, "environment", "self_test_output")))
+        return args
+
+    if command == "simulate":
+        simulation = config["simulation"]
+        supplied_output = getattr(args, "output", None)
+        args.output = Path(supplied_output).expanduser().resolve() if supplied_output is not None else resolve_path(simulation["output"])
+        for name in ("control_hz", "physics_substeps", "duration", "profile", "max_joint_velocity"):
+            setattr(args, name, coalesce(getattr(args, name, None), simulation[name]))
+        args.realtime = bool(getattr(args, "realtime", False))
         return args
 
     if command == "visualize":
@@ -607,6 +685,7 @@ def apply_teleop_config(args: argparse.Namespace, config: dict[str, Any]) -> Non
     safe_teleop = coalesce(args.safe_teleop, cfg_get(config, "teleop", "safe_teleop"))
     args.safe_teleop = "true" if config_bool(safe_teleop) else "false"
     args.safe_rate = coalesce(args.safe_rate, cfg_get(config, "teleop", "safe_rate"))
+    apply_timing_config(args, config, "teleop")
     args.max_joint_delta_per_step = coalesce(args.max_joint_delta_per_step, cfg_get(config, "teleop", "max_joint_delta_per_step"))
     args.max_command_delta_from_baseline = coalesce(
         args.max_command_delta_from_baseline,
@@ -655,6 +734,7 @@ def apply_replay_config(args: argparse.Namespace, config: dict[str, Any]) -> Non
     args.ik_backend = coalesce(args.ik_backend, cfg_get(config, "replay", "ik_backend"))
     args.ik_task = coalesce(args.ik_task, cfg_get(config, "replay", "ik_task"))
     args.rate = coalesce(args.rate, cfg_get(config, "replay", "rate"))
+    apply_timing_config(args, config, "replay")
     args.max_frames = coalesce(args.max_frames, cfg_get(config, "replay", "max_frames"))
     args.stride = coalesce(args.stride, cfg_get(config, "replay", "stride"))
     args.position_scale = coalesce(args.position_scale, cfg_get(config, "replay", "position_scale"))
@@ -855,6 +935,7 @@ def run_teleop(args: argparse.Namespace) -> int:
         require_file(args.wrist_calibration)
         command.extend(("--wrist-calibration", str(args.wrist_calibration)))
     append_teleop_startup_cli(command, args)
+    append_timing_cli(command, args, live=True)
     append_skeleton_retarget_cli(command, args)
     append_hand_ik_cli(command, args)
     if args.hand_only:
@@ -1018,6 +1099,7 @@ def run_replay(args: argparse.Namespace) -> int:
         command.extend(("--wrist-calibration", str(args.wrist_calibration)))
     append_skeleton_retarget_cli(command, args)
     append_teleop_startup_cli(command, args)
+    append_timing_cli(command, args, live=False)
     append_hand_ik_cli(command, args)
     if args.hand_only:
         command.append("--hand-only")
@@ -1125,6 +1207,20 @@ def run_combined_calibration(args: argparse.Namespace) -> int:
         candidate_path.unlink(missing_ok=True)
 
 
+def run_simulation(args: argparse.Namespace) -> int:
+    entry = SOURCE_DIR / "teleop_simulation.py"
+    require_file(entry)
+    command = command_prefix(args) + [str(entry), "--output", str(args.output),
+        "--control-hz", str(args.control_hz), "--physics-substeps", str(args.physics_substeps),
+        "--duration", str(args.duration), "--profile", str(args.profile),
+        "--max-joint-velocity", str(args.max_joint_velocity)]
+    if args.realtime:
+        command.append("--realtime")
+    for scenario in getattr(args, "scenario", None) or []:
+        command.extend(("--scenario", scenario))
+    return run_child(command)
+
+
 def run_compile_check(args: argparse.Namespace) -> int:
     files = [
         PROTOCOL_ENTRY,
@@ -1134,12 +1230,14 @@ def run_compile_check(args: argparse.Namespace) -> int:
         ARM_TEST_ENTRY,
         REPLAY_ENTRY,
         SOURCE_DIR / "teleop_direct_retarget.py",
+        SOURCE_DIR / "teleop_control_safety.py",
         SOURCE_DIR / "teleop_hand_ik.py",
         SOURCE_DIR / "teleop_hand_control.py",
         SOURCE_DIR / "revo2_hand_ik_worker.py",
         SOURCE_DIR / "teleop_ik_adapters.py",
         SOURCE_DIR / "teleop_ik_core.py",
         SOURCE_DIR / "teleop_skeleton_retarget.py",
+        SOURCE_DIR / "teleop_simulation.py",
         SOURCE_DIR / "teleop_ik_ubtech_casadi.py",
         SOURCE_DIR / "teleop_ik_types.py",
         SOURCE_DIR / "teleop_mocap_calibration.py",
@@ -1513,6 +1611,7 @@ def print_menu(base: argparse.Namespace) -> None:
     print("3. 数采动作回放")
     print("4. 启动实时动捕遥操作")
     print("5. 查看最近一次关节角曲线")
+    print("6. URDF 离线仿真与 IK 验证（无机器人连接）")
     print("0. 退出")
 
 
@@ -1568,6 +1667,8 @@ def run_interactive_menu(base: argparse.Namespace) -> int:
             code = run_menu_teleop(base)
         elif choice == "5":
             code = run_menu_visualize(base)
+        elif choice == "6":
+            code = run_simulation(make_menu_args(base, "simulate"))
         else:
             print("未知选项。")
             continue
@@ -1584,6 +1685,8 @@ def main() -> int:
         return check_environment(include_teleop=args.teleop, ik_backend=args.ik_backend)
     if args.command == "test":
         return run_test(args)
+    if args.command == "simulate":
+        return run_simulation(args)
     if args.command == "visualize":
         return run_visualize(args)
     if args.command == "record":

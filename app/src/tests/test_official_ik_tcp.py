@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+from pathlib import Path
 import unittest
 
 import numpy as np
@@ -7,17 +9,21 @@ import pinocchio as pin
 
 from teleop_ik_types import TeleopIKConfig, TeleopIKInput
 from teleop_robot_constants import POSITION_ONLY_LOCKED_JOINT_INDICES
-from teleop_ik_ubtech_casadi import (
-    ARM_JOINT_NAMES,
-    OFFICIAL_SOLVER_SO_PATH,
-    OfficialTiangong2ProIK,
-)
+from teleop_joint_schema import ARM_JOINT_NAMES
+
+OFFICIAL_SOLVER_SO_PATH = (Path(__file__).resolve().parents[3] / "third_party" /
+                           "tiangong2pro_ik" / "tiangong2pro_ik" / ".casadi_cache" / "ik_solver.so")
 
 
-@unittest.skipUnless(OFFICIAL_SOLVER_SO_PATH.is_file(), "缺少官方 IK 求解器 .so")
+@unittest.skipUnless(os.environ.get("VR_RUN_VENDOR_IK_TESTS") == "1" and OFFICIAL_SOLVER_SO_PATH.is_file(),
+                     "旧官方 native IK 集成测试需提供依赖/.so 并显式设置 VR_RUN_VENDOR_IK_TESTS=1")
 class OfficialIkTcpFrameTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
+        # Keep hardware-free test collection independent of legacy CasADi and
+        # its native plugin. Opting in deliberately loads the vendor solver.
+        from teleop_ik_ubtech_casadi import OfficialTiangong2ProIK
+
         cls.solver = OfficialTiangong2ProIK(
             TeleopIKConfig(
                 joint_names=list(ARM_JOINT_NAMES),

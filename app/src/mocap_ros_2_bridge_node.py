@@ -25,7 +25,7 @@ UDP_IP = "0.0.0.0"
 UDP_PORT = 15000
 UDP_PACKET_SIZE = 65535
 MOCAP_DEVICE_MODE = "glove"
-CONTROL_RATE_HZ = 20.0
+CONTROL_RATE_HZ = 100.0
 TIME_WARNING_THRESHOLD_MS = (1.0 / CONTROL_RATE_HZ) * 1000.0 * 0.8
 
 # 控制模式：direct 走骨架直映射演示包络；ik 走末端 IK；raise_template 走固定平举动作模板。
@@ -50,6 +50,7 @@ from teleop_skeleton_retarget import SkeletonRetargeter, validate_skeleton_frame
 from teleop_hand_ik import (
     HandIkError,
     Revo2HandIkSidecar,
+    LatestHandIkWorker,
     add_hand_ik_arguments,
     hand_ik_config_from_args,
     hand_ik_enabled,
@@ -71,7 +72,7 @@ from teleop_ik_types import IKCommand
 from teleop_joint_schema import ARM_JOINT_NAMES as SCHEMA_ARM_JOINT_NAMES
 from teleop_joint_schema import ARM_MOTOR_IDS as SCHEMA_ARM_MOTOR_IDS
 from teleop_joint_schema import arm_joint_limits_from_urdf, arm_positions_from_status
-from teleop_control_safety import feedback_is_fresh, require_fresh_feedback
+from teleop_control_safety import command_time_step, feedback_is_fresh, joint_velocity_limits_from_urdf, require_fresh_feedback
 from teleop_mocap_calibration import RelativeMocapTargetMapper, load_workspace_calibration
 from teleop_wrist_calibration import (
     load_wrist_calibration,
@@ -93,6 +94,7 @@ from teleop_robot_constants import (
     WAIST_CMD_TYPE,
     WAIST_ERROR_DESCRIPTIONS,
     WAIST_MOTOR_ID,
+    WAIST_JOINT_NAME,
     WAIST_MOTOR_TEMPLATE,
     WAIST_STATUS_TOPIC,
     WAIST_STATUS_TYPE,
@@ -125,7 +127,11 @@ IK_ARM_JOINT_NAMES = list(SCHEMA_ARM_JOINT_NAMES)
 ARM_MOTOR_IDS = list(SCHEMA_ARM_MOTOR_IDS)
 MAX_JOINT_DELTA_PER_STEP = 0.08
 SAFE_TELEOP_MODE = True
-SAFE_COMMAND_RATE_HZ = 3.0
+SAFE_COMMAND_RATE_HZ = 100.0
+MAX_JOINT_VELOCITY = 0.48  # rad/s, independent of the control callback rate.
+HAND_CONTROL_RATE_HZ = 20.0
+MAX_HAND_VELOCITY = 1.0  # Normalized hand travel per second.
+LOG_RATE_HZ = 1.0
 MAX_COMMAND_DELTA_FROM_BASELINE = 1.0
 STARTUP_HOLD_SECONDS = 2.0
 STARTUP_HUMAN_VERTICAL_COSINE = 0.78
@@ -152,7 +158,7 @@ LOG_FILE_NAME = "mocap_ik_bridge.log"
 LOG_MOCAP_DATA = True
 LOG_IK_RESULT = True
 LOG_ROBOT_COMMAND = True
-LOG_EVERY_N_FRAMES = 1  # 20Hz 长时间运行时可改成 5/10 减少日志量
+LOG_EVERY_N_FRAMES = 100
 # ==============================================================================
 
 
@@ -181,6 +187,9 @@ class MocapBridgeNode(Node):
         self.raise_template_retargeter = None
         self.direct_baseline_q = None
         self.raise_template_baseline_q = None
+        effective_direct_args = copy.copy(DIRECT_RETARGET_RUNTIME_ARGS)
+        if effective_direct_args is not None:
+            effective_direct_args.max_joint_delta_per_step = min(MAX_JOINT_DELTA_PER_STEP, MAX_JOINT_VELOCITY / CONTROL_RATE_HZ)
         if HAND_ONLY_MODE:
             pass
         elif CONTROL_MODE == "skeleton":
@@ -188,7 +197,7 @@ class MocapBridgeNode(Node):
                 raise RuntimeError("skeleton 模式运行参数尚未初始化")
             self.skeleton_retargeter = SkeletonRetargeter(
                 direct_retarget_config_from_args(
-                    DIRECT_RETARGET_RUNTIME_ARGS, joint_names=IK_ARM_JOINT_NAMES, motor_ids=ARM_MOTOR_IDS,
+                    effective_direct_args, joint_names=IK_ARM_JOINT_NAMES, motor_ids=ARM_MOTOR_IDS,
                 ),
                 orientation_scale=MOCAP_RELATIVE_ORIENTATION_SCALE,
             )
@@ -204,7 +213,7 @@ class MocapBridgeNode(Node):
                 control_dt=1.0 / CONTROL_RATE_HZ,
                 max_iterations=8,
                 damping=0.03,
-                max_joint_delta_per_step=MAX_JOINT_DELTA_PER_STEP,
+                max_joint_delta_per_step=min(MAX_JOINT_DELTA_PER_STEP, MAX_JOINT_VELOCITY / CONTROL_RATE_HZ),
                 locked_joint_indices=POSITION_ONLY_LOCKED_JOINT_INDICES if IK_TASK_MODE == "position_only" else (),
             )
             if IK_SOLVER_BACKEND == "teleop_dls":
@@ -225,7 +234,7 @@ class MocapBridgeNode(Node):
                     joint_names=IK_ARM_JOINT_NAMES,
                     motor_ids=ARM_MOTOR_IDS,
                     control_side=CONTROL_SIDE,
-                    max_joint_delta_per_step=MAX_JOINT_DELTA_PER_STEP,
+                    max_joint_delta_per_step=min(MAX_JOINT_DELTA_PER_STEP, MAX_JOINT_VELOCITY / CONTROL_RATE_HZ),
                     smoothing_alpha=1.0,
                 )
             )
@@ -234,7 +243,7 @@ class MocapBridgeNode(Node):
                 raise RuntimeError("direct 模式运行参数尚未初始化")
             self.direct_retargeter = DirectRetargeter(
                 direct_retarget_config_from_args(
-                    DIRECT_RETARGET_RUNTIME_ARGS,
+                    effective_direct_args,
                     joint_names=IK_ARM_JOINT_NAMES,
                     motor_ids=ARM_MOTOR_IDS,
                 )
@@ -260,14 +269,19 @@ class MocapBridgeNode(Node):
         self.hand_feedback: dict[str, tuple[float, ...] | None] = {"left": None, "right": None}
         self.hand_feedback_time: dict[str, float | None] = {"left": None, "right": None}
         self.last_hand_command: dict[str, tuple[float, ...] | None] = {"left": None, "right": None}
+        self.last_hand_publish_time: dict[str, float | None] = {"left": None, "right": None}
+        self.last_hand_submission = 0
         self._warned_hand_state: dict[str, bool] = {"left": False, "right": False}
         if DIRECT_RETARGET_RUNTIME_ARGS is not None and hand_ik_enabled(DIRECT_RETARGET_RUNTIME_ARGS):
             try:
-                self.hand_ik_sidecar = Revo2HandIkSidecar(
-                    hand_ik_config_from_args(DIRECT_RETARGET_RUNTIME_ARGS)
+                self.hand_ik_sidecar = LatestHandIkWorker(
+                    Revo2HandIkSidecar(hand_ik_config_from_args(DIRECT_RETARGET_RUNTIME_ARGS)),
+                    rate_hz=HAND_CONTROL_RATE_HZ,
                 )
             except Exception as exc:
-                self.get_logger().error(f"Revo2 手部 IK sidecar 启动失败；双臂管线继续运行: {exc}")
+                if HAND_CONTROL_CONFIG.publish_enabled:
+                    raise RuntimeError(f"请求的手部 IK 启动失败，取消控制会话: {exc}") from exc
+                self.get_logger().error(f"Revo2 手部 IK sidecar 启动失败，未启用手部发布: {exc}")
 
         self.rosbridge_client = None
         self.arm_status_sub = None
@@ -284,10 +298,18 @@ class MocapBridgeNode(Node):
         self.last_arm_state_time = None
         self.last_waist_state_time = None
         self.last_command_q = None
+        self.last_waist_publish_time = None
         self.last_waist_command = None
         self.safe_baseline_q = None
         self.safe_baseline_waist = None
         self.last_command_publish_time = 0.0
+        source = Path(__file__).resolve().parent
+        urdf_path = source / "models" / "walker_tienkung_ei_description" / "walker_tienkung_ei.urdf"
+        self.waist_velocity_limit = MAX_JOINT_VELOCITY
+        if CONTROL_MODE == "ik" and getattr(self.ik_solver, "controls_waist", False):
+            urdf_path = source.parents[1] / "third_party" / "tiangong2pro_ik" / "tiangong2pro_ik" / "tienkung2_pro" / "urdf" / "tiangong2.0_pro.urdf"
+            self.waist_velocity_limit = joint_velocity_limits_from_urdf(urdf_path, (WAIST_JOINT_NAME,))[0]
+        self.command_velocity_limits = np.asarray(joint_velocity_limits_from_urdf(urdf_path, IK_ARM_JOINT_NAMES))
         self.command_faulted = False
         self._warned_missing_arm_state = False
         self._warned_arm_error = False
@@ -611,6 +633,12 @@ class MocapBridgeNode(Node):
 
     def control_loop(self):
         """定时器回调：取最新动捕和最新关节状态，执行 IK 并发布命令。"""
+        if self.command_faulted:
+            return
+        try:
+            self.require_hand_worker_health()
+        except HandIkError:
+            return
         with self.data_lock:
             mocap_data = snapshot_mocap_data(self.latest_mocap_data)
 
@@ -683,23 +711,41 @@ class MocapBridgeNode(Node):
                 return
             self.process_hand_ik(mocap_data)
 
+    def fault_hand_worker(self, exc) -> None:
+        if not self.command_faulted:
+            self.get_logger().error(f"Revo2 手部异步 worker 失败，停止本次控制会话: {exc}")
+        self.command_faulted = True
+        self.reset_skeleton_alignment()
+
+    def require_hand_worker_health(self) -> None:
+        worker = getattr(self, "hand_ik_sidecar", None)
+        check = None if worker is None else getattr(worker, "check_health", None)
+        if check is not None:
+            try:
+                check()
+            except HandIkError as exc:
+                self.fault_hand_worker(exc)
+                raise
+
     def process_hand_ik(self, mocap_data: dict[str, Any]) -> None:
         if self.hand_ik_sidecar is None:
             return
-        mocap_frame = mocap_data.get("mocap_frame")
-        timestamp_us = getattr(mocap_frame, "timestamp_us", None)
-        if timestamp_us is not None and timestamp_us == self.last_hand_mocap_timestamp_us:
-            return
         try:
-            result = self.hand_ik_sidecar.solve_replay_frame(mocap_data)
+            self.hand_ik_sidecar.submit(mocap_data, mocap_data["receive_monotonic"])
+            completed = self.hand_ik_sidecar.poll()
         except HandIkError as exc:
-            self.get_logger().warn(f"Revo2 手部 IK 失败；本帧双臂管线继续运行: {exc}")
+            self.fault_hand_worker(exc)
             return
+        if completed is None or completed.submission <= getattr(self, "last_hand_submission", 0):
+            return
+        self.last_hand_submission = completed.submission
+        if not feedback_is_fresh(completed.received_at, time.monotonic(), DROP_STALE_MOCAP_SECONDS):
+            return
+        result = completed.result
         self.latest_hand_ik_result = result
-        self.last_hand_mocap_timestamp_us = timestamp_us
         if self.should_log() and LOG_IK_RESULT:
             self.log_section("hand_ik_local_result", result.to_summary())
-        self.publish_hand_result(result, mocap_data.get("receive_monotonic"))
+        self.publish_hand_result(result, completed.received_at)
 
     def publish_hand_result(self, result, mocap_received_at: float | None = None) -> None:
         if self.command_faulted or not HAND_CONTROL_CONFIG.publish_enabled or not ENABLE_ROBOT_COMMAND:
@@ -731,13 +777,19 @@ class MocapBridgeNode(Node):
                     self._warned_hand_state[side] = True
                 continue
             try:
+                dt = command_time_step(HAND_CONTROL_RATE_HZ, now, getattr(self, "last_hand_publish_time", {}).get(side))
+                budget = min(HAND_CONTROL_CONFIG.max_step, MAX_HAND_VELOCITY * dt)
+                measured_budget = min(HAND_CONTROL_CONFIG.max_step, MAX_HAND_VELOCITY / HAND_CONTROL_RATE_HZ)
+                if budget <= 0:
+                    continue
+                limited_config = replace(HAND_CONTROL_CONFIG, max_step=budget)
                 target = map_hand_radians(result.joint_positions, side, HAND_CONTROL_CONFIG)
                 safe = apply_hand_command_safety(
                     target,
                     feedback,
                     last_command,
                     side,
-                    HAND_CONTROL_CONFIG,
+                    limited_config,
                 )
                 message = build_hand_joint_state_message(safe)
                 with self.state_lock:
@@ -751,13 +803,13 @@ class MocapBridgeNode(Node):
                     self.require_skeleton_feedback()
                 if feedback is None:
                     raise HandControlError("手部反馈失效")
-                for reference in (feedback, last_command):
+                for reference, allowed in ((feedback, measured_budget), (last_command, budget)):
                     if reference is None:
                         continue
                     values = np.asarray(reference, dtype=float)
                     if values.shape != (6,) or not np.all(np.isfinite(values)):
                         raise HandControlError("手部反馈或上一命令无效")
-                    if np.any(np.abs(np.asarray(safe) - values) > HAND_CONTROL_CONFIG.max_step + 1e-9):
+                    if np.any(np.abs(np.asarray(safe) - values) > allowed + 1e-9):
                         raise HandControlError("手部命令超出实测位置或上一已提交命令的单步范围")
             except (HandControlError, KeyError) as exc:
                 self.get_logger().warn(f"生成 {side} 手命令失败；该手本帧停发: {exc}")
@@ -766,6 +818,7 @@ class MocapBridgeNode(Node):
                 self.get_logger().warn(str(exc))
                 continue
             try:
+                self.require_hand_worker_health()
                 self.require_command_connection()
                 self.hand_cmd_pubs[side].publish(message)
             except Exception as exc:
@@ -774,6 +827,9 @@ class MocapBridgeNode(Node):
                 return
             with self.state_lock:
                 self.last_hand_command[side] = safe
+                if not hasattr(self, "last_hand_publish_time"):
+                    self.last_hand_publish_time = {}
+                self.last_hand_publish_time[side] = time.monotonic()
             if self.should_log() and LOG_ROBOT_COMMAND:
                 self.log_section(
                     "hand_robot_command",
@@ -1029,6 +1085,9 @@ class MocapBridgeNode(Node):
             return
         self.startup_pose_locked = False
         self.startup_pose_gate.reset()
+        worker = getattr(self, "hand_ik_sidecar", None)
+        if worker is not None and hasattr(worker, "invalidate"):
+            worker.invalidate()
 
     def require_skeleton_feedback(self) -> None:
         """The full-session hand path also depends on live, aligned arm feedback."""
@@ -1048,7 +1107,8 @@ class MocapBridgeNode(Node):
         # Do not erase that target history to make a displaced robot pass.
         if self.last_command_q is not None:
             indices = slice(None) if CONTROL_SIDE == "both" else slice(0, 7) if CONTROL_SIDE == "left" else slice(7, 14)
-            if np.any(np.abs(baseline_q[indices] - self.last_command_q[indices]) > MAX_JOINT_DELTA_PER_STEP + 1e-9):
+            budget = self.arm_step_budget(time.monotonic(), submitted=True)
+            if np.any(np.abs(baseline_q[indices] - self.last_command_q[indices]) > budget[indices] + 1e-9):
                 self.command_faulted = True
                 raise RuntimeError("实测姿态已偏离上一已提交目标，控制会话已停发；检查控制器后重新启动")
         if HAND_CONTROL_CONFIG.publish_enabled:
@@ -1057,7 +1117,7 @@ class MocapBridgeNode(Node):
                              (("left", "right") if CONTROL_SIDE == "both" else (CONTROL_SIDE,))]
             for measured, submitted in snapshots:
                 if measured is not None and submitted is not None and np.any(
-                    np.abs(np.asarray(measured) - submitted) > HAND_CONTROL_CONFIG.max_step + 1e-9
+                    np.abs(np.asarray(measured) - submitted) > min(HAND_CONTROL_CONFIG.max_step, MAX_HAND_VELOCITY / HAND_CONTROL_RATE_HZ) + 1e-9
                 ):
                     self.command_faulted = True
                     raise RuntimeError("手部实测姿态已偏离上一已提交目标，检查控制器后重新启动")
@@ -1070,8 +1130,8 @@ class MocapBridgeNode(Node):
             mapper = self.skeleton_retargeter
             if mapper is None:
                 raise RuntimeError("skeleton 映射器未初始化")
-            observation, _ = validate_skeleton_frame(mocap_data, mapper.config)
             if not self.startup_pose_locked:
+                observation, _ = validate_skeleton_frame(mocap_data, mapper.config)
                 body = observation.body_frame
                 status = self.startup_pose_gate.observe(
                     now=float(mocap_data["receive_monotonic"]),
@@ -1232,6 +1292,27 @@ class MocapBridgeNode(Node):
         # RelativeMocapTargetMapper 已把未控制侧固定在本次机器人 Home；这里不能再退回静态旧 Home。
         return left_mocap_wrist, right_mocap_wrist
 
+    def arm_step_budget(self, now: float, *, submitted: bool = False) -> np.ndarray:
+        previous = None if self.last_command_q is None or submitted else self.last_command_publish_time
+        dt = command_time_step(CONTROL_RATE_HZ, now, previous)
+        velocities = np.minimum(MAX_JOINT_VELOCITY, getattr(self, "command_velocity_limits", np.full(14, np.inf)))
+        return np.minimum(MAX_JOINT_DELTA_PER_STEP, velocities * dt)
+
+    def command_rate_credit(self, now: float) -> float:
+        # Two tokens tolerate timer jitter without halving a nominal 100 Hz
+        # stream. Actual elapsed-time velocity limits still govern every move.
+        credit = getattr(self, "_command_rate_credit", 2.0)
+        updated = getattr(self, "_command_rate_updated", now)
+        return min(2.0, credit + max(0.0, now - updated) * SAFE_COMMAND_RATE_HZ)
+
+    def commit_command_rate(self, now: float) -> None:
+        self._command_rate_credit = max(0.0, self.command_rate_credit(now) - 1.0)
+        self._command_rate_updated = now
+
+    def waist_step_budget(self, now: float, *, measured: bool = False) -> float:
+        dt = command_time_step(CONTROL_RATE_HZ, now, None if measured else getattr(self, "last_waist_publish_time", None))
+        return min(MAX_JOINT_DELTA_PER_STEP, MAX_JOINT_VELOCITY * dt, getattr(self, "waist_velocity_limit", MAX_JOINT_VELOCITY) * dt)
+
     def apply_safety(self, sol_q: list[float], current_q: np.ndarray) -> np.ndarray | None:
         target_q = np.asarray(sol_q, dtype=float)
         current_q = np.asarray(current_q, dtype=float)
@@ -1251,30 +1332,27 @@ class MocapBridgeNode(Node):
 
         if SAFE_TELEOP_MODE and SAFE_COMMAND_RATE_HZ > 0:
             now = time.monotonic()
-            min_interval = 1.0 / SAFE_COMMAND_RATE_HZ
-            if now - self.last_command_publish_time < min_interval:
+            if self.command_rate_credit(now) < 1.0 - 1e-9:
                 return None
 
         reference_q = self.last_command_q if self.last_command_q is not None else current_q
-        from teleop_ik_core import apply_joint_safety
-
         joint_limits = np.asarray(self.command_joint_limits, dtype=float).copy()
         if SAFE_TELEOP_MODE and CONTROL_MODE != "raise_template":
             joint_limits[:, 0] = np.maximum(
                 joint_limits[:, 0], self.safe_baseline_q - MAX_COMMAND_DELTA_FROM_BASELINE)
             joint_limits[:, 1] = np.minimum(
                 joint_limits[:, 1], self.safe_baseline_q + MAX_COMMAND_DELTA_FROM_BASELINE)
-        try:
-            safe_q, limited = apply_joint_safety(
-                q_next=target_q,
-                q_ref=reference_q,
-                limits=list(map(tuple, joint_limits)),
-                max_step=MAX_JOINT_DELTA_PER_STEP,
-                smoothing_alpha=1.0,
-            )
-        except ValueError as exc:
-            self.get_logger().warn(f"关节安全边界无效，跳过本帧: {exc}")
+        budget = self.arm_step_budget(time.monotonic())
+        measured_budget = self.arm_step_budget(time.monotonic(), submitted=True)
+        lower = np.maximum.reduce((joint_limits[:, 0], current_q - measured_budget, reference_q - budget))
+        upper = np.minimum.reduce((joint_limits[:, 1], current_q + measured_budget, reference_q + budget))
+        indices = slice(None) if CONTROL_SIDE == "both" else slice(0, 7) if CONTROL_SIDE == "left" else slice(7, 14)
+        if np.any(lower[indices] > upper[indices]):
+            self.get_logger().warn("机械、实测速度与上一命令安全边界不相容，跳过本帧")
             return None
+        safe_q = current_q.copy()
+        safe_q[indices] = np.clip(target_q[indices], lower[indices], upper[indices])
+        limited = not np.allclose(safe_q, target_q, atol=1e-9)
 
         if not np.all(np.isfinite(safe_q)):
             self.get_logger().warn("安全层输出包含 NaN/Inf，跳过本帧")
@@ -1312,20 +1390,21 @@ class MocapBridgeNode(Node):
                     self.safe_baseline_waist + MAX_COMMAND_DELTA_FROM_BASELINE,
                 )
             )
-        safe_position = float(
-            np.clip(
-                target,
-                reference - MAX_JOINT_DELTA_PER_STEP,
-                reference + MAX_JOINT_DELTA_PER_STEP,
-            )
-        )
-        return float(np.clip(safe_position, lower, upper))
+        budget = self.waist_step_budget(time.monotonic())
+        measured_budget = self.waist_step_budget(time.monotonic(), measured=True)
+        lower = max(lower, current_position - measured_budget, reference - budget)
+        upper = min(upper, current_position + measured_budget, reference + budget)
+        if lower > upper:
+            self.get_logger().warn("腰部速度与实测安全边界不相容，跳过本帧")
+            return None
+        return float(np.clip(target, lower, upper))
 
     def validate_command_for_publish(
         self, command: IKCommand, mocap_received_at: float | None, *, check_rate: bool = True
     ) -> None:
         if self.command_faulted:
             raise RuntimeError("本次控制会话已有发送异常，检查机器人并重新启动后再启用")
+        self.require_hand_worker_health()
         if command.control_side != CONTROL_SIDE:
             raise ValueError("命令控制侧与当前会话不一致")
         if tuple(command.motor_ids) != SCHEMA_ARM_MOTOR_IDS or tuple(command.joint_names) != SCHEMA_ARM_JOINT_NAMES:
@@ -1344,15 +1423,17 @@ class MocapBridgeNode(Node):
             current_waist = self.current_waist_position
             waist_received_at = self.last_waist_state_time
         now = time.monotonic()
+        budget = self.arm_step_budget(now, submitted=not check_rate)
+        measured_budget = self.arm_step_budget(now, submitted=True)
         require_fresh_feedback(mocap_received_at, now, DROP_STALE_MOCAP_SECONDS, "动捕数据")
         require_fresh_feedback(arm_received_at, now, ARM_STATE_TIMEOUT_SECONDS, "手臂反馈")
         if current_q is None or current_q.shape != (14,) or not np.all(np.isfinite(current_q)):
             raise ValueError("手臂反馈无效")
         indices = slice(None) if CONTROL_SIDE == "both" else slice(0, 7) if CONTROL_SIDE == "left" else slice(7, 14)
-        if np.any(np.abs(positions[indices] - current_q[indices]) > MAX_JOINT_DELTA_PER_STEP + 1e-9):
+        if np.any(np.abs(positions[indices] - current_q[indices]) > measured_budget[indices] + 1e-9):
             raise ValueError("关节命令超出当前实测位置的单步范围")
         if self.last_command_q is not None and np.any(
-            np.abs(positions[indices] - self.last_command_q[indices]) > MAX_JOINT_DELTA_PER_STEP + 1e-9
+            np.abs(positions[indices] - self.last_command_q[indices]) > budget[indices] + 1e-9
         ):
             raise ValueError("关节命令超出上一条已提交命令的单步范围")
         if SAFE_TELEOP_MODE and CONTROL_MODE != "raise_template":
@@ -1361,7 +1442,7 @@ class MocapBridgeNode(Node):
             if np.any(np.abs(positions[indices] - self.safe_baseline_q[indices]) > MAX_COMMAND_DELTA_FROM_BASELINE + 1e-9):
                 raise ValueError("关节命令超出会话基线范围")
         if check_rate and SAFE_TELEOP_MODE and SAFE_COMMAND_RATE_HZ > 0 and self.last_command_q is not None:
-            if now - self.last_command_publish_time < 1.0 / SAFE_COMMAND_RATE_HZ:
+            if self.command_rate_credit(now) < 1.0 - 1e-9:
                 raise RuntimeError("命令发布频率超过会话限制")
         if command.waist_position is not None:
             require_fresh_feedback(waist_received_at, now, WAIST_STATE_TIMEOUT_SECONDS, "腰部反馈")
@@ -1369,9 +1450,10 @@ class MocapBridgeNode(Node):
             lower, upper = self.ik_solver.waist_limit
             if current_waist is None or not np.isfinite(current_waist) or not np.isfinite(target):
                 raise ValueError("腰部命令或反馈无效")
-            if not lower <= target <= upper or abs(target - current_waist) > MAX_JOINT_DELTA_PER_STEP + 1e-9:
+            waist_budget = self.waist_step_budget(now)
+            if not lower <= target <= upper or abs(target - current_waist) > self.waist_step_budget(now, measured=True) + 1e-9:
                 raise ValueError("腰部命令超出机械或实测单步范围")
-            if self.last_waist_command is not None and abs(target - self.last_waist_command) > MAX_JOINT_DELTA_PER_STEP + 1e-9:
+            if self.last_waist_command is not None and abs(target - self.last_waist_command) > waist_budget + 1e-9:
                 raise ValueError("腰部命令超出上一条已提交命令的单步范围")
             if SAFE_TELEOP_MODE and (
                 self.safe_baseline_waist is None or not np.isfinite(self.safe_baseline_waist)
@@ -1430,11 +1512,13 @@ class MocapBridgeNode(Node):
                     self.arm_cmd_pub.publish(msg)
                     self.last_command_q = np.asarray(command.positions, dtype=float).copy()
                     self.last_command_publish_time = time.monotonic()
+                    self.commit_command_rate(self.last_command_publish_time)
                     if waist_msg is not None:
                         self.validate_command_for_publish(command, mocap_received_at, check_rate=False)
                         self.require_command_connection()
                         self.waist_cmd_pub.publish(waist_msg)
                         self.last_waist_command = float(command.waist_position)
+                        self.last_waist_publish_time = time.monotonic()
                 except Exception as exc:
                     self.command_faulted = True
                     self.get_logger().error(f"控制发送异常，已停发本次会话，需检查并重新启动: {exc}")
@@ -1472,6 +1556,7 @@ class MocapBridgeNode(Node):
                 self.ros2_cmd_pub.publish(msg)
                 self.last_command_q = np.asarray(command.positions, dtype=float).copy()
                 self.last_command_publish_time = time.monotonic()
+                self.commit_command_rate(self.last_command_publish_time)
             except Exception as exc:
                 self.command_faulted = True
                 self.get_logger().error(f"控制发送异常，已停发本次会话，需检查并重新启动: {exc}")
@@ -1493,7 +1578,7 @@ class MocapBridgeNode(Node):
             )
 
     def should_log(self) -> bool:
-        return LOG_EVERY_N_FRAMES <= 1 or self.log_frame_index % LOG_EVERY_N_FRAMES == 0
+        return LOG_RATE_HZ > 0 and (LOG_EVERY_N_FRAMES <= 1 or self.log_frame_index % LOG_EVERY_N_FRAMES == 0)
 
     def log_section(self, section: str, payload: dict[str, Any]):
         record = {
@@ -1585,6 +1670,11 @@ def parse_runtime_args(args=None):
     parser.add_argument("--orientation-scale", type=float, default=MOCAP_RELATIVE_ORIENTATION_SCALE, help="skeleton 身体局部手姿态增益，默认 1")
     parser.add_argument("--safe-teleop", choices=("true", "false"), default="true" if SAFE_TELEOP_MODE else "false", help="是否启用低速安全遥操作门控")
     parser.add_argument("--safe-rate", type=float, default=SAFE_COMMAND_RATE_HZ, help="安全模式下最大命令发布频率")
+    parser.add_argument("--control-rate", type=float, default=CONTROL_RATE_HZ, help="手臂控制定时器 Hz；100Hz 跟踪还需要足够快的动捕和机器人反馈")
+    parser.add_argument("--max-joint-velocity", type=float, default=MAX_JOINT_VELOCITY, help="关节速度上限 rad/s；同时受 URDF 和单步上限约束")
+    parser.add_argument("--hand-control-rate", type=float, default=HAND_CONTROL_RATE_HZ, help="独立手部异步 IK 最大计算频率 Hz")
+    parser.add_argument("--max-hand-velocity", type=float, default=MAX_HAND_VELOCITY, help="手部归一化位置每秒最大变化")
+    parser.add_argument("--log-rate", type=float, default=LOG_RATE_HZ, help="全帧日志最大采样频率 Hz，0 关闭例行全帧日志；故障日志始终保留")
     parser.add_argument("--max-joint-delta-per-step", type=float, default=MAX_JOINT_DELTA_PER_STEP, help="单次下发最大关节变化，单位 rad")
     parser.add_argument("--max-command-delta-from-baseline", type=float, default=MAX_COMMAND_DELTA_FROM_BASELINE, help="相对启动时手臂姿态的最大偏移，单位 rad")
     parser.add_argument("--startup-hold-seconds", type=float, default=STARTUP_HOLD_SECONDS, help="人体自然下垂需连续稳定保持的秒数")
@@ -1609,6 +1699,8 @@ def apply_runtime_args(parsed) -> None:
     global STARTUP_HOLD_SECONDS, STARTUP_HUMAN_VERTICAL_COSINE
     global STARTUP_HUMAN_MIN_WRIST_DROP_M, STARTUP_HUMAN_MAX_LATERAL_OFFSET_M, STARTUP_MAX_HOME_RMS_M
     global DIRECT_RETARGET_RUNTIME_ARGS, HAND_CONTROL_CONFIG
+    global CONTROL_RATE_HZ, TIME_WARNING_THRESHOLD_MS, MAX_JOINT_VELOCITY, HAND_CONTROL_RATE_HZ, MAX_HAND_VELOCITY
+    global LOG_RATE_HZ, LOG_EVERY_N_FRAMES
     MOCAP_DEVICE_MODE = parsed.device_mode
     CONTROL_SIDE = parsed.control_side
     CONTROL_MODE = parsed.control_mode
@@ -1625,6 +1717,19 @@ def apply_runtime_args(parsed) -> None:
         raise ValueError("skeleton 自动映射使用 teleop_dls 的骨段与手部姿态任务")
     SAFE_TELEOP_MODE = parsed.safe_teleop == "true"
     SAFE_COMMAND_RATE_HZ = float(parsed.safe_rate)
+    CONTROL_RATE_HZ = float(parsed.control_rate)
+    MAX_JOINT_VELOCITY = float(parsed.max_joint_velocity)
+    HAND_CONTROL_RATE_HZ = float(parsed.hand_control_rate)
+    MAX_HAND_VELOCITY = float(parsed.max_hand_velocity)
+    LOG_RATE_HZ = float(parsed.log_rate)
+    for name, value in (("control_rate", CONTROL_RATE_HZ), ("max_joint_velocity", MAX_JOINT_VELOCITY),
+                        ("hand_control_rate", HAND_CONTROL_RATE_HZ), ("max_hand_velocity", MAX_HAND_VELOCITY)):
+        if not np.isfinite(value) or value <= 0:
+            raise ValueError(f"{name} 必须为有限正数")
+    if not np.isfinite(LOG_RATE_HZ) or LOG_RATE_HZ < 0:
+        raise ValueError("log_rate 必须为有限非负数")
+    LOG_EVERY_N_FRAMES = max(1, int(np.ceil(CONTROL_RATE_HZ / LOG_RATE_HZ))) if LOG_RATE_HZ else 1
+    TIME_WARNING_THRESHOLD_MS = 0.8 * 1000.0 / CONTROL_RATE_HZ
     MAX_JOINT_DELTA_PER_STEP = float(parsed.max_joint_delta_per_step)
     MAX_COMMAND_DELTA_FROM_BASELINE = float(parsed.max_command_delta_from_baseline)
     for name, value in (

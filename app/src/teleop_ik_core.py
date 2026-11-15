@@ -14,6 +14,8 @@ from teleop_ik_types import IKCommand, TeleopIKConfig, TeleopIKInput, TeleopIKRe
 
 _MODEL_DIR = Path(__file__).resolve().parent / "models" / "walker_tienkung_ei_description"
 _URDF_PATH = _MODEL_DIR / "walker_tienkung_ei.urdf"
+_IDENTITY_3 = np.eye(3)
+_ROTATION_TOLERANCE = 1e-6 + 1e-5 * _IDENTITY_3
 
 
 class TeleopArmIK:
@@ -167,6 +169,15 @@ class TeleopArmIK:
             side: ensure_rotation(target_orientations.get(side), f"{side} target orientation")
             for side in selected_control_sides(control_side)
         }
+        if orientations is not None and self.model.nq == self.model.nv == 14:
+            return self._solve_skeleton_tasks(
+                timestamp=timestamp, control_side=control_side,
+                directions={side: self._checked_target_directions(target_directions, side) for side in orientations},
+                orientations=orientations, current=current, reference=command_ref,
+                iterations=iterations, damping=dls_damping,
+                upper_weight=float(upper_weight), forearm_weight=float(forearm_weight),
+                orientation_weight=float(orientation_weight), initially_limited=limited,
+            )
         error_norm = 0.0
 
         for iteration in range(iterations):
@@ -237,6 +248,118 @@ class TeleopArmIK:
             "damping": dls_damping,
             "orientation_weight": float(orientation_weight),
         }
+
+    def _solve_skeleton_tasks(
+        self, *, timestamp: float, control_side: str,
+        directions: dict[str, tuple[np.ndarray, np.ndarray]], orientations: dict[str, np.ndarray],
+        current: np.ndarray, reference: np.ndarray, iterations: int, damping: float,
+        upper_weight: float, forearm_weight: float, orientation_weight: float, initially_limited: bool,
+    ) -> tuple[np.ndarray, dict[str, Any]]:
+        """Independent 7-axis DLS blocks, with one kinematic update per iteration.
+
+        The reduced walker has a fixed base/waist and disjoint arm chains.
+        Solving its two 9x7 tasks independently is algebraically the same damped
+        least-squares problem as the stacked 18x14 task. Inputs are checked once
+        by the public entry point; the inner loop only handles model output.
+        """
+        lower, upper = joint_limit_arrays(self.joint_limits, 14)
+        sides = tuple(directions)
+        columns = {side: slice(0, 7) if side == "left" else slice(7, 14) for side in sides}
+        task_jacobians = np.empty((len(sides), 9, 7))
+        task_errors = np.empty((len(sides), 9))
+        q = current.copy()
+        limited = initially_limited
+        for iteration in range(iterations):
+            # computeJointJacobians also updates oMi; getFrameJacobian reuses J.
+            pin.computeJointJacobians(self.model, self.data, q)
+            error_squared = 0.0
+            for arm_index, side in enumerate(sides):
+                column = columns[side]
+                jacobian, error = task_jacobians[arm_index], task_errors[arm_index]
+                shoulder_id, elbow_id, wrist_id = self._segment_ids(side)
+                ids = (shoulder_id, elbow_id, wrist_id)
+                positions = [self.data.oMi[joint_id].translation for joint_id in ids]
+                translation_jacobians = [pin.getJointJacobian(
+                    self.model, self.data, joint_id, pin.ReferenceFrame.LOCAL_WORLD_ALIGNED
+                )[:3, column] for joint_id in ids]
+                for row, weight, target, first, second in (
+                    (0, upper_weight, directions[side][0], 0, 1),
+                    (3, forearm_weight, directions[side][1], 1, 2),
+                ):
+                    vector = positions[second] - positions[first]
+                    length = float(np.linalg.norm(vector))
+                    if length <= 1e-9 or not np.isfinite(length):
+                        raise ValueError("robot segment has invalid length")
+                    direction = vector / length
+                    delta_jacobian = translation_jacobians[second] - translation_jacobians[first]
+                    jacobian[row:row + 3] = (delta_jacobian - np.outer(direction, direction @ delta_jacobian)) * (weight / length)
+                    error[row:row + 3] = (target - direction) * weight
+                frame_id = self.left_frame_id if side == "left" else self.right_frame_id
+                pin.updateFramePlacement(self.model, self.data, frame_id)
+                jacobian[6:] = pin.getFrameJacobian(
+                    self.model, self.data, frame_id, pin.ReferenceFrame.LOCAL_WORLD_ALIGNED
+                )[3:, column] * orientation_weight
+                error[6:] = clip_vector_norm(
+                    pin.log3(orientations[side] @ self.data.oMf[frame_id].rotation.T), self.config.max_orientation_error
+                ) * orientation_weight
+                error_squared += float(error @ error)
+            if error_squared < 1e-10:
+                break
+            dq = np.zeros(14)
+            increments = compute_joint_space_increment(task_jacobians, task_errors, damping)
+            for arm_index, side in enumerate(sides):
+                column = columns[side]
+                dq[column] = increments[arm_index]
+                dq[column] += self.config.nullspace_gain * (self.home_q[column] - q[column])
+            raw_next = q + dq
+            limited = limited or bool(np.any(raw_next < lower) or np.any(raw_next > upper))
+            q = np.clip(raw_next, lower, upper)
+        q, command_limited = apply_joint_safety(
+            q, reference, self.joint_limits, self.config.max_joint_delta_per_step, self.config.smoothing_alpha,
+        )
+        # Only the selected arm may be commanded. The other half stays at the
+        # actual feedback even if a caller supplies a different last command.
+        if control_side == "left":
+            q[7:] = current[7:]
+        elif control_side == "right":
+            q[:7] = current[:7]
+        state = self.segment_state(q, control_side)
+        residuals = {}
+        final_error_squared = 0.0
+        for side in sides:
+            actual = state[side]
+            angular_error = pin.log3(orientations[side] @ actual["orientation"].T)
+            residuals[side] = {
+                "upper_angle_rad": float(np.arccos(np.clip(actual["upper"] @ directions[side][0], -1., 1.))),
+                "forearm_angle_rad": float(np.arccos(np.clip(actual["forearm"] @ directions[side][1], -1., 1.))),
+                "orientation_angle_rad": float(np.linalg.norm(angular_error)),
+            }
+            for key, target, weight in (("upper", directions[side][0], upper_weight), ("forearm", directions[side][1], forearm_weight)):
+                error = (target - actual[key]) * weight
+                final_error_squared += float(error @ error)
+            weighted_angular = clip_vector_norm(angular_error, self.config.max_orientation_error) * orientation_weight
+            final_error_squared += float(weighted_angular @ weighted_angular)
+        return q, {
+            "solver": "urdf_segment_direction_dls", "timestamp": float(timestamp),
+            "iterations": iteration + 1, "error_norm": float(np.sqrt(final_error_squared)),
+            "limited": bool(limited or command_limited), "residual_by_side": residuals,
+            "upper_weight": upper_weight, "forearm_weight": forearm_weight,
+            "damping": damping, "orientation_weight": orientation_weight,
+        }
+
+    def segment_state(self, q: np.ndarray, control_side: str = "both") -> dict[str, dict[str, np.ndarray]]:
+        """Read directions and hand orientations using a single final FK."""
+        q_safe = clip_to_limits(ensure_vector(q, self.model.nq, "q"), self.joint_limits)
+        pin.forwardKinematics(self.model, self.data, q_safe)
+        result = {}
+        for side in selected_control_sides(control_side):
+            shoulder_id, elbow_id, wrist_id = self._segment_ids(side)
+            upper, _ = normalized_direction(self.data.oMi[shoulder_id].translation, self.data.oMi[elbow_id].translation, "upper")
+            forearm, _ = normalized_direction(self.data.oMi[elbow_id].translation, self.data.oMi[wrist_id].translation, "forearm")
+            frame_id = self.left_frame_id if side == "left" else self.right_frame_id
+            pin.updateFramePlacement(self.model, self.data, frame_id)
+            result[side] = {"upper": upper, "forearm": forearm, "orientation": self.data.oMf[frame_id].rotation.copy()}
+        return result
 
     def _build_segment_orientation_task(
         self, q: np.ndarray, targets: dict[str, np.ndarray]
@@ -703,6 +826,19 @@ def compute_damped_increment(jacobian: np.ndarray, error: np.ndarray, damping: f
     return jacobian.T @ np.linalg.solve(jacobian @ jacobian.T + damping_matrix, error)
 
 
+def compute_joint_space_increment(jacobian: np.ndarray, error: np.ndarray, damping: float) -> np.ndarray:
+    """Equivalent DLS in the smaller joint space; zero damping uses least squares."""
+    if damping == 0.0:
+        if jacobian.ndim == 3:
+            return np.asarray([np.linalg.lstsq(block, rhs, rcond=None)[0] for block, rhs in zip(jacobian, error)])
+        return np.linalg.lstsq(jacobian, error, rcond=None)[0]
+    transpose = np.swapaxes(jacobian, -2, -1)
+    hessian = transpose @ jacobian
+    diagonal = np.arange(hessian.shape[-1])
+    hessian[..., diagonal, diagonal] += damping * damping
+    return np.linalg.solve(hessian, transpose @ error[..., None])[..., 0]
+
+
 def stabilized_joint_increment(
     q: np.ndarray,
     home_q: np.ndarray,
@@ -872,7 +1008,7 @@ def ensure_rotation(value: np.ndarray, name: str) -> np.ndarray:
     rotation = np.asarray(value, dtype=float)
     if rotation.shape != (3, 3) or not np.all(np.isfinite(rotation)):
         raise ValueError(f"{name} 必须是 3x3 有限旋转矩阵")
-    if not np.allclose(rotation @ rotation.T, np.eye(3), atol=1e-6) or not np.isclose(np.linalg.det(rotation), 1.0, atol=1e-6):
+    if np.any(np.abs(rotation @ rotation.T - _IDENTITY_3) > _ROTATION_TOLERANCE) or abs(np.linalg.det(rotation) - 1.0) > 1.1e-5:
         raise ValueError(f"{name} 必须是右手正交旋转矩阵")
     return rotation.copy()
 

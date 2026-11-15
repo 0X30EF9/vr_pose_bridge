@@ -103,6 +103,7 @@ class ReplaySafetyTests(unittest.TestCase):
         self.args = types.SimpleNamespace(
             control_side="both", control_mode="direct", ik_backend="teleop_dls",
             rate=20.0, max_joint_delta_per_step=0.04,
+            max_joint_velocity=100.0, max_hand_velocity=1.0, hand_control_rate=20.0,
             max_command_delta_from_baseline=0.5, restore_seconds=1.0,
             prepose="none", prepose_seconds=1.0, prepose_steps=30,
             spd=0.7, cur=2.0, allow_risk=False, ik_task="pose",
@@ -209,6 +210,7 @@ class ReplaySafetyTests(unittest.TestCase):
         second = self.publish(self.command(1.0), gate)
         np.testing.assert_allclose(second.positions, 0.04)
         self.arm_feedback(np.full(14, 0.04))
+        self.clock.now += 1.0 / self.args.rate
         third = self.publish(self.command(1.0), gate)
         np.testing.assert_allclose(third.positions, 0.08)
 

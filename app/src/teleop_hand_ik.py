@@ -9,6 +9,8 @@ from pathlib import Path
 import select
 import subprocess
 import sys
+import threading
+import time
 from typing import Any, Mapping, TextIO
 
 from teleop_joint_schema import HAND_JOINT_ORDER
@@ -188,7 +190,7 @@ class Revo2HandIkSidecar:
     """仅通过本机匿名管道调用 Revo2 SDK；该类不包含任何网络发布接口。"""
 
     def __init__(self, config: HandIkSidecarConfig):
-        if config.timeout_s <= 0:
+        if not math.isfinite(config.timeout_s) or config.timeout_s <= 0:
             raise ValueError("hand IK timeout_s 必须 > 0")
         self.config = config
         self._sequence = 0
@@ -196,7 +198,11 @@ class Revo2HandIkSidecar:
         self._diagnostic = HandIkDiagnosticWriter(config.diagnostic_csv) if config.diagnostic_csv else None
         self._process: subprocess.Popen[str] | None = None
         self._response: TextIO | None = None
-        self._start()
+        try:
+            self._start()
+        except Exception:
+            self.close()
+            raise
 
     def __enter__(self) -> "Revo2HandIkSidecar":
         return self
@@ -236,6 +242,9 @@ class Revo2HandIkSidecar:
                 bufsize=1,
                 pass_fds=(write_fd,),
             )
+        except Exception:
+            os.close(read_fd)
+            raise
         finally:
             os.close(write_fd)
         self._response = os.fdopen(read_fd, "r", encoding="utf-8", buffering=1)
@@ -286,8 +295,18 @@ class Revo2HandIkSidecar:
         self._sequence = 0
         self.latest_result = None
 
+    def abort(self) -> None:
+        """Interrupt a blocked SDK subprocess when the owning worker shuts down."""
+        process = self._process
+        if process is not None and process.poll() is None:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+
     def close(self) -> None:
         if self._process is not None:
+            process = self._process
             try:
                 if self._process.poll() is None:
                     self._write_request({"type": "close"})
@@ -306,6 +325,8 @@ class Revo2HandIkSidecar:
                     except subprocess.TimeoutExpired:
                         self._process.kill()
                         self._process.wait(timeout=1.0)
+            if process.stdin is not None and not process.stdin.closed:
+                process.stdin.close()
             self._process = None
         if self._response is not None:
             self._response.close()
@@ -313,6 +334,130 @@ class Revo2HandIkSidecar:
         if self._diagnostic is not None:
             self._diagnostic.close()
             self._diagnostic = None
+
+
+@dataclass(frozen=True)
+class AsyncHandIkResult:
+    submission: int
+    received_at: float
+    result: HandIkFrameResult
+
+
+class LatestHandIkWorker:
+    """One running solve and one replaceable pending frame; never publishes.
+
+    The worker owns the sidecar. Results retain the original local monotonic
+    input receipt time and can be consumed only once. Invalidating a session
+    also discards any result still being computed for that session.
+    """
+
+    def __init__(self, sidecar, rate_hz: float = 20.0):
+        if not math.isfinite(rate_hz) or rate_hz <= 0:
+            raise ValueError("hand control rate must be positive and finite")
+        self.sidecar = sidecar
+        self.rate_hz = rate_hz
+        self._condition = threading.Condition()
+        self._pending = None
+        self._completed = None
+        self._error = None
+        self._stopped = False
+        self._generation = 0
+        self._submission = 0
+        self._last_received = None
+        self._last_key = None
+        self._thread = threading.Thread(target=self._run, name="hand-ik-latest", daemon=True)
+        self._thread.start()
+
+    def submit(self, frame: Mapping[str, Any], received_at: float) -> bool:
+        if not math.isfinite(received_at):
+            raise HandIkError("hand input receipt time must be finite")
+        mocap = frame.get("mocap_frame")
+        key = getattr(mocap, "timestamp_us", frame.get("packet_timestamp_us", frame.get("receive_time")))
+        if key is not None:
+            try:
+                key = float(key)
+            except (TypeError, ValueError) as exc:
+                raise HandIkError("hand frame timestamp must be numeric") from exc
+            if not math.isfinite(key):
+                raise HandIkError("hand frame timestamp must be finite")
+        with self._condition:
+            if self._stopped:
+                raise HandIkError("hand worker is closed")
+            if self._error is not None:
+                raise HandIkError(f"hand worker failed: {self._error}")
+            if self._last_received is not None and received_at <= self._last_received:
+                return False
+            if key is not None and self._last_key is not None and key <= self._last_key:
+                return False
+            self._submission += 1
+            self._last_received, self._last_key = received_at, key
+            self._pending = (self._generation, self._submission, dict(frame), received_at)
+            self._condition.notify()
+            return True
+
+    def poll(self) -> AsyncHandIkResult | None:
+        with self._condition:
+            if self._error is not None:
+                raise HandIkError(f"hand worker failed: {self._error}")
+            result, self._completed = self._completed, None
+            return result
+
+    def check_health(self) -> None:
+        """Inspect a latched SDK failure without consuming a completed result."""
+        with self._condition:
+            if self._error is not None:
+                raise HandIkError(f"hand worker failed: {self._error}")
+            if self._stopped:
+                raise HandIkError("hand worker is closed")
+
+    def invalidate(self) -> None:
+        with self._condition:
+            self._generation += 1
+            self._pending = self._completed = None
+
+    def _run(self) -> None:
+        next_solve = 0.0
+        try:
+            while True:
+                with self._condition:
+                    while not self._stopped:
+                        delay = max(0.0, next_solve - time.monotonic())
+                        if self._pending is not None and delay <= 0:
+                            break
+                        self._condition.wait(delay if self._pending is not None else None)
+                    if self._stopped:
+                        return
+                    generation, submission, frame, received_at = self._pending
+                    self._pending = None
+                next_solve = time.monotonic() + 1.0 / self.rate_hz
+                result = self.sidecar.solve_replay_frame(frame)
+                with self._condition:
+                    if not self._stopped and generation == self._generation:
+                        self._completed = AsyncHandIkResult(submission, received_at, result)
+        except Exception as exc:
+            with self._condition:
+                if not self._stopped:
+                    self._error = exc
+                self._pending = self._completed = None
+        finally:
+            try:
+                self.sidecar.close()
+            except Exception:
+                pass
+
+    def close(self) -> None:
+        with self._condition:
+            self._stopped = True
+            self._pending = self._completed = None
+            self._condition.notify_all()
+        self._thread.join(timeout=0.2)
+        if self._thread.is_alive():
+            abort = getattr(self.sidecar, "abort", None)
+            if abort is not None:
+                abort()
+            self._thread.join(timeout=1.0)
+        if self._thread.is_alive():
+            raise HandIkError("hand worker did not stop within the shutdown deadline")
 
 
 def hand_ik_config_from_args(args: argparse.Namespace) -> HandIkSidecarConfig:

@@ -1,0 +1,12 @@
+# Dedicated simulation environment. No ROS or vendor solver is needed.
+numpy==2.3.5
+scipy>=1.14,<2
+pin==3.7.0
+cmeel-urdfdom<5
+cmeel-tinyxml2==10.0.0
+pybullet==3.2.7
+threadpoolctl
+pytest
+# Pure Python rosbridge client for offline replay and the regression suite.
+# Installing it does not require a ROS runtime or initiate a connection.
+roslibpy==2.1.0

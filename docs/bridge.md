@@ -36,7 +36,7 @@ python run.py check --teleop
 
 默认后端不需要 CasADi、IPOPT 或旧官方 `.so`。使用 legacy 官方后端时，环境检测会额外检查 CasADi，且第三方官方包需完整保留。
 
-双手 SDK 位于 `third_party/revo2_hand_ik_sdk`，其配置和 native 库路径在 `hand_ik` 段设置。SDK 在独立子进程运行；只测试双臂时可传 `--hand-ik-compute false`。计算开关和 `hand_control.publish` 发布开关分开。
+双手 SDK 位于 `third_party/revo2_hand_ik_sdk`，其配置和 native 库路径在 `hand_ik` 段设置。SDK 在独立子进程运行，由 20 Hz latest-only 工作线程异步调用，不阻塞手臂控制回调；只测试双臂时可传 `--hand-ik-compute false`。计算开关和 `hand_control.publish` 发布开关分开。
 
 启动器收到 `--hand-ik-compute false` 时，也会关闭本次会话的手部发布；不会修改配置文件中保存的手部偏好。
 
@@ -59,7 +59,7 @@ python run.py check --teleop
 从仓库根目录执行。
 
 ```bash
-# 菜单：环境检测、录制、回放、实时控制、日志图表
+# 菜单：环境检测、录制、回放、实时控制、日志图表、URDF 仿真
 python run.py
 
 # 实时只计算，不发布；仍需机器人当前反馈
@@ -80,9 +80,14 @@ python run.py replay app/data/vr_udp_capture/你的录制.csv --execute --yes
 # 本机模拟 UDP 录制自测，以及离线回归
 python run.py test
 python -m pytest -q app/src/tests
+
+# 独立 URDF 物理仿真：先安装 requirements_simulation.txt
+python run.py simulate --control-hz 100 --duration 4 --realtime
 ```
 
 新骨架回放需要含完整上半身节点、跟踪信息与有效静止启动片段的记录。旧版仅左右手位姿记录请使用 legacy 模式分析，不能补空节点伪装成完整骨架。
+
+回放的 `--rate`（别名 `--control-rate`）设置控制 tick 频率，默认 100 Hz；执行保留录制的原始时间轴，低频源帧在中间 tick 使用最近样本，不会把 20 Hz 录制加速 5 倍。旧样本保留原接收时间，超过新鲜度窗口即停发；调度落后时跳过过时 tick，不抢跑未来样本。
 
 仓库配置可能保留原有 `robot_command`、`execute` 和手部发布偏好；预览请显式使用对应关闭选项。`--dry-run` 不连接机器人；`teleop --robot-command false` 仍订阅状态，但不发送动作命令。
 
@@ -91,12 +96,17 @@ python -m pytest -q app/src/tests
 - `rosbridge`：机器人地址、端口与状态超时。
 - `record`：UDP 地址、端口和录制路径。
 - `teleop` / `replay`：模式、控制侧、映射增益、启动窗口与命令边界。
+- `teleop.control_rate=100` 与 `safe_rate=100`：手臂计算频率及发布上限；`max_joint_velocity=0.48`（rad/s）同时受 URDF 速度、单步上限和实际反馈约束，漏帧不累计可移动额度。动捕和反馈低于控制频率时跟踪会保守下降。
+- `hand_control_rate=20`、`max_hand_velocity=1.0`：手部异步频率及归一化通道每秒变化上限；手部结果按原输入接收时间检查过期，异步错误会锁定会话。
+- `teleop.log_rate=1`：例行帧日志频率，`0` 可关闭；故障仍即时记录。`runtime.blas_threads=1` 只限制本进程及子进程的小矩阵 BLAS 线程。
 - `hand_ik` / `hand_control`：SDK 计算、通道映射、反馈和发布。
 - `workspace_calibration` / `wrist_calibration`：legacy 工具输出及输入路径，默认 `runtime_path=null`。
 
 `skeleton` 拒绝非空人工标定路径，拒绝旧官方后端与 `position_only`。错误会在启动子进程前报出。旧配置里若显式使用旧模式，仍按旧模式运行；要切换新路径，请同时设置 `control_mode=skeleton`、`ik_backend=teleop_dls`、`ik_task=pose` 并清空两个 `runtime_path`。
 
 URDF 限位和离线测试不能证明实际环境无碰撞，也不替代机器人硬件保护。失去跟踪、反馈过期或命令校验失败时，软件停发命令；停发不是硬件急停。新路径的默认增益不绕过这些检查。
+
+100 Hz 的实测范围与时延分解见 [验证报告](100hz-validation.md)；仿真安装、场景和交互回放见 [URDF 仿真](simulation.md)。
 
 ## Legacy
 

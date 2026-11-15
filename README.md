@@ -27,8 +27,11 @@ vr_pose_bridge/
 │   └── data/                    # 新录制、诊断和图表
 ├── docs/
 │   ├── bridge.md               # 当前使用说明
+│   ├── simulation.md           # 独立 URDF 物理仿真
+│   ├── 100hz-validation.md     # 性能、精度与验证范围
 │   ├── device-guide.md         # 动捕设备原始使用说明
 │   └── legacy-calibration.md   # legacy 高级标定说明
+├── tools/                      # 环境安装与性能复测入口
 ├── third_party/
 │   ├── revo2_hand_ik_sdk/        # 可选双手 SDK
 │   └── tiangong2pro_ik/          # 完整旧官方 IK 包，legacy 模式使用
@@ -38,6 +41,22 @@ vr_pose_bridge/
     ├── ik_robot_legacy/
     └── history_data/            # 历史采集和旧标定产物
 ```
+
+## 100 Hz 与 URDF 仿真
+
+默认手臂计算与发布上限为 `100 Hz`，双手 SDK 以独立的 `20 Hz` 工作线程运行，例行帧日志默认 `1 Hz`。角速度限制独立于控制频率，默认 `max_joint_velocity=0.48 rad/s`，并继续受 URDF 速度、单步和实测反馈范围限制；提高频率不会把原有小步限制变成更高的运动速度。
+
+100 Hz 的计算周期需要足够快的动捕和机器人反馈支持。较慢或停滞的反馈会保守限制跟踪，不会靠累计未确认的命令补齐。网络、机器人控制器及手部 SDK 的实际时延需要在接入后分别确认。
+
+无需 ROS 或实体机器人即可运行固定基座的 URDF 仿真，结果包括独立 FK 核对、闭环跟踪、限位/速度检查、耗时与周期统计，以及自包含 HTML 回放：
+
+```bash
+bash tools/setup_simulation.sh
+.venv/bin/python run.py simulate --control-hz 100 --duration 4 --realtime
+# 浏览器打开 app/data/simulation/simulation.html
+```
+
+环境推荐 Python 3.12（依赖支持范围为 3.11–3.12，已验证 3.12）；PyBullet 没有对应预编译包时需要 C++ 编译工具。仿真以简化几何替代缺失的网格，保留 URDF 运动链与惯性参数，不能据此证明真实环境无碰撞。详细用法见 [仿真说明](docs/simulation.md)，测量数据与实际验证范围见 [100 Hz 验证报告](docs/100hz-validation.md)。
 
 ## 离线预览
 

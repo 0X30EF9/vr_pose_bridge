@@ -24,6 +24,9 @@ class MappingStub:
         self.alignments.append((frames, baseline_q.copy()))
 
     def command_from_frame(self, frame, current_q, last_q_cmd=None, timestamp=None):
+        # The actual mapper validates every command frame after alignment.
+        from teleop_skeleton_retarget import validate_skeleton_frame
+        validate_skeleton_frame(frame, self.config)
         self.requests.append((current_q.copy(), last_q_cmd))
         return IKCommand(timestamp, "both", list(ARM_JOINT_NAMES),
                          current_q + 0.02, list(ARM_MOTOR_IDS))

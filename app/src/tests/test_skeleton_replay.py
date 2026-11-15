@@ -139,6 +139,9 @@ class SkeletonReplayTests(unittest.TestCase):
         self.args.control_side = "left"
         self.args.hand_ik_compute = True
         config = replace(self.fixture.hand_config, publish_enabled=True, thumb_rotation_mode="mapped")
+        # Measured hand feedback keeps arriving even when the asynchronous SDK
+        # has not produced a command yet.
+        self.clock.on_sleep = lambda: self.fixture.hand_feedback(self.fixture.hand.latest_valid()[1])
         sidecar = types.SimpleNamespace(
             solve_replay_frame=lambda frame: types.SimpleNamespace(
                 left_calibrated=True, right_calibrated=False, joint_positions=np.zeros(12),
@@ -195,6 +198,45 @@ class SkeletonReplayTests(unittest.TestCase):
         self.clock.on_sleep = lambda: self.fixture.arm_feedback(np.full(14, self.clock.now - 100.0))
         self.assertEqual(self.execute(), 14)
         self.assertEqual(FakeRetargeter.instances[0].alignments, [])
+        self.assertEqual(fixtures.FakeTopic.topics, [])
+
+    def test_20hz_recording_keeps_its_duration_and_real_two_second_startup_at_100hz(self):
+        self.args.rate = 100
+        self.args.startup_hold_seconds = 2.0
+        self.frames = []
+        for index in range(60):
+            frame = make_frame().to_replay_dict()
+            frame.pop("mocap_frame", None)
+            frame.update(receive_time=index * .05, packet_timestamp_us=index * 50000, target=0.0)
+            self.frames.append(frame)
+        original_times = [frame["receive_time"] for frame in self.frames]
+        self.clock.on_sleep = lambda: self.fixture.arm_feedback(np.zeros(14))
+        began = self.clock.now
+        self.assertEqual(self.execute(), 0)
+        self.assertAlmostEqual(self.clock.now - began, 2.96, places=7)
+        self.assertEqual(len(FakeRetargeter.instances[0].alignments), 1)
+        self.assertEqual(len(FakeRetargeter.instances[0].alignments[0][0]), 41)
+        self.assertEqual([frame["receive_time"] for frame in self.frames], original_times)
+
+    def test_replay_hold_does_not_refresh_source_receipt_or_choose_future_samples(self):
+        frames = [{"receive_time": value} for value in (0., .05, .1)]
+        records = []
+        for index, frame, received_at in replay.replay_control_ticks(frames, 100):
+            records.append((self.clock.now, index, received_at))
+        self.assertEqual(len(records), 11)
+        self.assertEqual(len({record[2] for record in records}), 3)
+        for now, index, received_at in records:
+            self.assertLessEqual(100.0 + frames[index]["receive_time"], now + 1e-9)
+            self.assertAlmostEqual(received_at, 100.0 + frames[index]["receive_time"])
+
+    def test_large_recording_gap_expires_instead_of_refreshing_a_held_source(self):
+        self.args.rate = 100
+        self.args.startup_hold_seconds = 2.0
+        self.frames = [self.frames[0], self.frames[-1]]
+        self.frames[0]["receive_time"], self.frames[-1]["receive_time"] = 0., 1.
+        self.clock.on_sleep = lambda: self.fixture.arm_feedback(np.zeros(14))
+        self.assertEqual(self.execute(), 14)
+        self.assertLess(self.clock.now, 100.32)
         self.assertEqual(fixtures.FakeTopic.topics, [])
 
     def test_tracking_loss_after_alignment_aborts_without_baseline_commands(self):

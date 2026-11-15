@@ -2,7 +2,8 @@
   "runtime": {
     "python": null,
     "conda_env": null,
-    "pause_after_action": true
+    "pause_after_action": true,
+    "blas_threads": 1
   },
   "rosbridge": {
     "host": "192.168.1.110",
@@ -79,7 +80,10 @@
     "control_mode": "skeleton",
     "ik_backend": "teleop_dls",
     "ik_task": "pose",
-    "rate": 10.0,
+    "rate": 100.0,
+    "max_joint_velocity": 0.48,
+    "hand_control_rate": 20.0,
+    "max_hand_velocity": 1.0,
     "max_frames": 15000,
     "stride": 1,
     "position_scale": 1.0,
@@ -137,7 +141,12 @@
     "position_scale": 1.0,
     "orientation_scale": 1.0,
     "safe_teleop": true,
-    "safe_rate": 8.0,
+    "control_rate": 100.0,
+    "safe_rate": 100.0,
+    "max_joint_velocity": 0.48,
+    "hand_control_rate": 20.0,
+    "max_hand_velocity": 1.0,
+    "log_rate": 1.0,
     "max_joint_delta_per_step": 0.06,
     "max_command_delta_from_baseline": 1.0,
     "startup_hold_seconds": 2.0,
@@ -156,6 +165,14 @@
     "direction_iterations": 6,
     "hand_only": false,
     "robot_command": true
+  },
+  "simulation": {
+    "output": "data/simulation",
+    "control_hz": 100.0,
+    "physics_substeps": 4,
+    "duration": 4.0,
+    "profile": "skeleton-100hz",
+    "max_joint_velocity": 0.48
   },
   "hand_ik": {
     "compute": true,
