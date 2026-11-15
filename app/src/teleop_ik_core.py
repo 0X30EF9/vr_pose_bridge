@@ -40,13 +40,13 @@ class TeleopArmIK:
 
         stage_start = time.perf_counter()
         self.robot = self._run_with_model_load_progress(
-            "build_full_robot_from_urdf",
-            lambda: pin.RobotWrapper.BuildFromURDF(str(_URDF_PATH), str(_MODEL_DIR)),
+            "build_kinematic_model_from_urdf",
+            lambda: pin.RobotWrapper(pin.buildModelFromUrdf(str(_URDF_PATH))),
         )
         self._log_event(
             "model_load_stage",
             {
-                "stage": "build_full_robot_from_urdf",
+                "stage": "build_kinematic_model_from_urdf",
                 "cost_ms": elapsed_ms(stage_start),
                 "full_nq": self.robot.model.nq,
                 "full_nv": self.robot.model.nv,
@@ -146,8 +146,10 @@ class TeleopArmIK:
         forearm_weight: float = 1.0,
         max_iterations: int | None = None,
         damping: float | None = None,
+        target_orientations: dict[str, np.ndarray] | None = None,
+        orientation_weight: float = 0.25,
     ) -> tuple[np.ndarray, dict[str, Any]]:
-        """以骨段方向为主任务求解 14 轴命令，不构造末端完整 pose。"""
+        """以骨段方向和可选手部姿态联合求解，不约束人体的绝对末端位置。"""
         current_raw = ensure_vector(current_q, self.model.nq, "current_q")
         command_raw = current_raw if last_q_cmd is None else ensure_vector(last_q_cmd, self.model.nq, "last_q_cmd")
         current = clip_to_limits(current_raw, self.joint_limits)
@@ -158,9 +160,13 @@ class TeleopArmIK:
         if isinstance(iterations, bool) or not isinstance(iterations, (int, np.integer)) or iterations < 1:
             raise ValueError("max_iterations 必须为正整数")
         dls_damping = float(self.config.damping if damping is None else damping)
-        weights = np.asarray([upper_weight, forearm_weight, dls_damping], dtype=float)
+        weights = np.asarray([upper_weight, forearm_weight, dls_damping, orientation_weight], dtype=float)
         if not np.all(np.isfinite(weights)) or np.any(weights < 0.0):
             raise ValueError("骨段任务权重和阻尼必须为有限非负数")
+        orientations = None if target_orientations is None else {
+            side: ensure_rotation(target_orientations.get(side), f"{side} target orientation")
+            for side in selected_control_sides(control_side)
+        }
         error_norm = 0.0
 
         for iteration in range(iterations):
@@ -171,6 +177,10 @@ class TeleopArmIK:
                 upper_weight=float(upper_weight),
                 forearm_weight=float(forearm_weight),
             )
+            if orientations is not None and orientation_weight > 0.0:
+                angular_jacobian, angular_error = self._build_segment_orientation_task(q, orientations)
+                jacobian = np.vstack((jacobian, angular_jacobian * orientation_weight))
+                error = np.concatenate((error, angular_error * orientation_weight))
             error_norm = float(np.linalg.norm(error))
             if jacobian.size == 0 or error_norm < 1e-5:
                 break
@@ -196,6 +206,9 @@ class TeleopArmIK:
             upper_weight=float(upper_weight),
             forearm_weight=float(forearm_weight),
         )
+        if orientations is not None and orientation_weight > 0.0:
+            _, angular_error = self._build_segment_orientation_task(q, orientations)
+            final_error = np.concatenate((final_error, angular_error * orientation_weight))
         error_norm = float(np.linalg.norm(final_error))
 
         residual_by_side: dict[str, dict[str, float]] = {}
@@ -206,6 +219,12 @@ class TeleopArmIK:
                 "upper_angle_rad": vector_angle(actual_upper, target_upper),
                 "forearm_angle_rad": vector_angle(actual_forearm, target_forearm),
             }
+            if orientations is not None:
+                frame_id = self.left_frame_id if side == "left" else self.right_frame_id
+                pin.updateFramePlacements(self.model, self.data)
+                residual_by_side[side]["orientation_angle_rad"] = float(np.linalg.norm(
+                    pin.log3(orientations[side] @ self.data.oMf[frame_id].rotation.T)
+                ))
         return q, {
             "solver": "urdf_segment_direction_dls",
             "timestamp": float(timestamp),
@@ -216,7 +235,26 @@ class TeleopArmIK:
             "upper_weight": float(upper_weight),
             "forearm_weight": float(forearm_weight),
             "damping": dls_damping,
+            "orientation_weight": float(orientation_weight),
         }
+
+    def _build_segment_orientation_task(
+        self, q: np.ndarray, targets: dict[str, np.ndarray]
+    ) -> tuple[np.ndarray, np.ndarray]:
+        pin.forwardKinematics(self.model, self.data, q)
+        pin.updateFramePlacements(self.model, self.data)
+        blocks: list[np.ndarray] = []
+        errors: list[np.ndarray] = []
+        for side, target in targets.items():
+            frame_id = self.left_frame_id if side == "left" else self.right_frame_id
+            jacobian = pin.computeFrameJacobian(
+                self.model, self.data, q, frame_id, pin.ReferenceFrame.LOCAL_WORLD_ALIGNED
+            )
+            blocks.append(jacobian[3:])
+            errors.append(clip_vector_norm(
+                pin.log3(target @ self.data.oMf[frame_id].rotation.T), self.config.max_orientation_error
+            ))
+        return np.vstack(blocks), np.concatenate(errors)
 
     def _segment_ids(self, side: str) -> tuple[int, int, int]:
         try:
@@ -382,23 +420,24 @@ class TeleopArmIK:
             "hip_roll_l_joint", "hip_pitch_l_joint", "hip_yaw_l_joint", "knee_pitch_l_joint", "ankle_pitch_l_joint", "ankle_roll_l_joint",
             "hip_roll_r_joint", "hip_pitch_r_joint", "hip_yaw_r_joint", "knee_pitch_r_joint", "ankle_pitch_r_joint", "ankle_roll_r_joint",
         ]
-        reduced_robot = self.robot.buildReducedRobot(
-            list_of_joints_to_lock=joints_to_lock,
-            reference_configuration=np.zeros(self.robot.model.nq),
+        reduced_model = pin.buildReducedModel(
+            self.robot.model,
+            [self.robot.model.getJointId(name) for name in joints_to_lock],
+            np.zeros(self.robot.model.nq),
         )
         add_operational_frame(
-            reduced_robot.model,
+            reduced_model,
             frame_name="L_ee",
             parent_joint_name="wrist_roll_l_joint",
             placement=pin.SE3(np.eye(3), np.array([0.025, -0.07, -0.21])),
         )
         add_operational_frame(
-            reduced_robot.model,
+            reduced_model,
             frame_name="R_ee",
             parent_joint_name="wrist_roll_r_joint",
             placement=pin.SE3(np.eye(3), np.array([0.025, 0.07, -0.21])),
         )
-        return reduced_robot.model
+        return reduced_model
 
     def _build_task(self, q: np.ndarray, ik_input: TeleopIKInput) -> tuple[np.ndarray, np.ndarray]:
         pin.forwardKinematics(self.model, self.data, q)
@@ -471,7 +510,7 @@ class TeleopArmIK:
         if not self.config.enable_local_log:
             return None
 
-        log_dir = Path(self.config.log_dir) if self.config.log_dir else Path(__file__).resolve().parent / "log"
+        log_dir = Path(self.config.log_dir) if self.config.log_dir else Path(__file__).resolve().parents[1] / "data" / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         log_path = log_dir / self.config.log_file_name
 
@@ -827,6 +866,15 @@ def ensure_vector(value: np.ndarray, size: int, name: str) -> np.ndarray:
     if not np.all(np.isfinite(vector)):
         raise ValueError(f"{name} 包含 NaN/Inf")
     return vector
+
+
+def ensure_rotation(value: np.ndarray, name: str) -> np.ndarray:
+    rotation = np.asarray(value, dtype=float)
+    if rotation.shape != (3, 3) or not np.all(np.isfinite(rotation)):
+        raise ValueError(f"{name} 必须是 3x3 有限旋转矩阵")
+    if not np.allclose(rotation @ rotation.T, np.eye(3), atol=1e-6) or not np.isclose(np.linalg.det(rotation), 1.0, atol=1e-6):
+        raise ValueError(f"{name} 必须是右手正交旋转矩阵")
+    return rotation.copy()
 
 
 def ensure_pose(value: np.ndarray, name: str) -> np.ndarray:

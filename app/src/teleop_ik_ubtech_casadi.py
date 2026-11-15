@@ -12,9 +12,9 @@ from teleop_ik_core import clip_to_limits, ensure_pose, resolve_joint_limits
 
 SOURCE_DIR = Path(__file__).resolve().parent
 OFFICIAL_PACKAGE_ROOT = (
-    SOURCE_DIR.parent.parent.parent
-    / "tiangong2pro_ik_v0.2 2"
-    / "tiangong2pro_ik_v0.2"
+    SOURCE_DIR.parent.parent
+    / "third_party"
+    / "tiangong2pro_ik"
     / "tiangong2pro_ik"
 )
 OFFICIAL_URDF_PATH = OFFICIAL_PACKAGE_ROOT / "tienkung2_pro" / "urdf" / "tiangong2.0_pro.urdf"

@@ -120,7 +120,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--host", default=ROSBRIDGE_HOST, help="rosbridge 地址")
     parser.add_argument("--port", type=int, default=ROSBRIDGE_PORT, help="rosbridge 端口")
     parser.add_argument("--control-side", choices=("left", "right", "both"), default="right", help="回放控制侧")
-    parser.add_argument("--control-mode", choices=("direct", "ik", "raise_template"), default="direct", help="direct=骨架直映射演示模式；ik=末端位姿 IK；raise_template=立正/侧平举/前平举模板映射")
+    parser.add_argument("--control-mode", choices=("skeleton", "direct", "ik", "raise_template"), default="skeleton", help="skeleton=自动对齐骨架并跟随手腕；direct=高级骨段方向映射；ik=高级末端位姿 IK；raise_template=姿态模板")
     parser.add_argument("--ik-backend", choices=("teleop_dls", "tiangong2pro_official", "ubtech_casadi"), default="teleop_dls", help="IK 求解后端；官方后端同时控制 31 号腰部关节")
     parser.add_argument("--ik-task", choices=("pose", "position_only"), default="pose", help="IK 任务类型：pose=官方完整 TCP 位姿 IK；position_only=实验性锁腕位置 IK")
     parser.add_argument("--rate", type=float, default=CONTROL_RATE_HZ, help="回放频率，默认 20Hz")
@@ -130,7 +130,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--workspace-calibration", type=Path, default=None, help="可选工作空间标定 JSON；显式指定的文件必须有效")
     parser.add_argument("--wrist-calibration", type=Path, default=None, help="可选人体 hand→wrist 控制点标定 JSON；显式指定的文件必须有效，省略时使用 skeleton 腕点")
     parser.add_argument("--hand-only", action="store_true", help="只回放双手 IK，强制停发手臂和腰部且不要求工作空间标定")
-    parser.add_argument("--orientation-scale", type=float, default=0.25, help="pose 模式的世界系相对手腕旋转增益；默认 0.25 优先保证 TCP 位置")
+    parser.add_argument("--orientation-scale", type=float, default=None, help="手腕旋转增益；skeleton 默认 1.0，其他模式默认 0.25")
+    parser.add_argument("--startup-hold-seconds", type=float, default=2.0, help="skeleton 自动对齐前，人体自然下垂和机器人静止须同时保持的时间")
+    parser.add_argument("--startup-human-vertical-cosine", type=float, default=0.78)
+    parser.add_argument("--startup-human-min-wrist-drop", type=float, default=0.30)
+    parser.add_argument("--startup-human-max-lateral-offset", type=float, default=0.16)
+    parser.add_argument("--startup-max-home-rms", type=float, default=0.025)
     parser.add_argument("--max-position-step", type=float, default=DEFAULT_MAX_POSITION_STEP, help="单帧手部位置跳变阈值，单位 m")
     parser.add_argument("--max-angular-step", type=float, default=DEFAULT_MAX_ANGULAR_STEP, help="单帧手部姿态跳变阈值，单位 rad")
     parser.add_argument("--max-joint-delta-per-step", type=float, default=DEFAULT_MAX_JOINT_DELTA_PER_STEP, help="IK 命令单帧关节限幅")
@@ -148,10 +153,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--prepose-steps", type=int, default=30, help="进入回放基线姿态的插值步数")
     parser.add_argument("--use-robot-status", action="store_true", help="dry-run 时也连接机器人读取真实 baseline，不发布命令")
     parser.add_argument("--allow-risk", action="store_true", help="允许数据跳变或命令偏移超过默认阈值；不建议真机使用")
-    parser.add_argument("--streaming", action="store_true", help="execute+ik 时边算 IK 边发布，避免先全量规划")
+    parser.add_argument("--streaming", action="store_true", help="execute+ik 时边算 IK 边发布；skeleton 执行始终按实时反馈逐帧求解")
     parser.add_argument("--execute", action="store_true", help="真正发布回放命令；不加则只做数据检查和 IK 预览")
     parser.add_argument("--yes", action="store_true", help="跳过二次确认，配合 --execute 使用")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.orientation_scale is None:
+        args.orientation_scale = 1.0 if args.control_mode == "skeleton" else 0.25
+    return args
 
 
 def resolve_input_path(input_path: Path) -> Path:
@@ -906,12 +914,99 @@ def plan_raise_template_replay_commands(
     return commands, summary
 
 
+def validate_skeleton_replay_options(args: argparse.Namespace) -> None:
+    if args.workspace_calibration is not None or args.wrist_calibration is not None:
+        raise ValueError("skeleton 自动对齐模式不接受 workspace/wrist 人工标定文件；请移除这些参数或显式选择高级 ik 模式")
+    if args.ik_backend != "teleop_dls" or args.ik_task != "pose":
+        raise ValueError("skeleton 模式使用 walker teleop_dls pose 求解；其他后端或任务请显式选择高级 ik 模式")
+
+
+def make_skeleton_retargeter(args: argparse.Namespace):
+    validate_skeleton_replay_options(args)
+    from teleop_skeleton_retarget import SkeletonRetargeter
+
+    config = direct_retarget_config_from_args(args, joint_names=IK_ARM_JOINT_NAMES, motor_ids=ARM_MOTOR_IDS)
+    return SkeletonRetargeter(config, orientation_scale=args.orientation_scale)
+
+
+def make_skeleton_startup_gate(args: argparse.Namespace):
+    from teleop_startup_pose import NaturalDownStartupConfig, NaturalDownStartupGate
+
+    return NaturalDownStartupGate(NaturalDownStartupConfig(
+        hold_seconds=getattr(args, "startup_hold_seconds", 2.0),
+        human_vertical_cosine=getattr(args, "startup_human_vertical_cosine", 0.78),
+        human_min_wrist_drop_m=getattr(args, "startup_human_min_wrist_drop", 0.30),
+        human_max_lateral_offset_m=getattr(args, "startup_human_max_lateral_offset", 0.16),
+        max_home_rms_m=getattr(args, "startup_max_home_rms", 0.025),
+    ))
+
+
+def observe_skeleton_startup(gate, now: float, frame: dict[str, Any], current_q: np.ndarray):
+    positions = []
+    for side in ("left", "right"):
+        try:
+            positions.append(np.asarray(frame["skeleton"][side]["wrist"]["pos"], dtype=float))
+        except (KeyError, TypeError, ValueError):
+            positions.append(np.full(3, np.nan))
+    return gate.observe(
+        now=now, frame=frame, current_q=current_q,
+        left_home_position=positions[0], right_home_position=positions[1],
+    )
+
+
+def plan_skeleton_replay_commands(
+    frames: list[dict[str, Any]], args: argparse.Namespace, baseline_q: np.ndarray,
+) -> tuple[list[IKCommand], dict[str, Any]]:
+    """Preview one automatic alignment window; simulate following only for preview."""
+    retargeter = make_skeleton_retargeter(args)
+    gate = make_skeleton_startup_gate(args)
+    current_q = ReplayFeedbackGate.arm_vector(baseline_q)
+    startup_baseline = current_q.copy()
+    aligned = False
+    commands: list[IKCommand] = []
+    max_step = 0.0
+    max_from_baseline = 0.0
+    last_command = None
+    startup_frames = 0
+    for index, frame in enumerate(frames):
+        timestamp = float(frame["receive_time"])
+        if not math.isfinite(timestamp):
+            raise ValueError("骨架回放时间必须为有限值")
+        if not aligned:
+            status = observe_skeleton_startup(gate, timestamp, frame, current_q)
+            if not status.ready:
+                continue
+            startup_baseline = ReplayFeedbackGate.arm_vector(status.robot_baseline_q)
+            retargeter.align(status.window_frames, startup_baseline)
+            aligned = True
+            startup_frames = index + 1
+        command = retargeter.command_from_frame(frame, current_q, last_q_cmd=last_command, timestamp=timestamp)
+        if command.waist_position is not None:
+            raise RuntimeError("skeleton 回放不得产生腰部命令")
+        commands.append(command)
+        indices = controlled_indices(args.control_side)
+        max_step = max(max_step, max_joint_delta(command.positions, current_q, indices))
+        max_from_baseline = max(max_from_baseline, max_joint_delta(command.positions, startup_baseline, indices))
+        current_q = ReplayFeedbackGate.arm_vector(command.positions)
+        last_command = current_q.copy()
+    if not aligned:
+        raise ValueError("骨架回放未取得稳定自然下垂与机器人静止窗口，未生成运动命令")
+    return commands, {
+        "control_mode": "skeleton", "control_side": args.control_side,
+        "command_count": len(commands), "startup_frame_count": startup_frames,
+        "max_joint_step": max_step, "max_command_delta_from_baseline": max_from_baseline,
+        "baseline_source": "automatic_startup_window", "feedback_source": "simulated_preview",
+    }
+
+
 def plan_replay_commands(
     frames: list[dict[str, Any]],
     args: argparse.Namespace,
     baseline_q: np.ndarray,
     baseline_waist: float = 0.0,
 ) -> tuple[list[IKCommand], dict[str, Any]]:
+    if args.control_mode == "skeleton":
+        return plan_skeleton_replay_commands(frames, args, baseline_q)
     if args.control_mode == "direct":
         return plan_direct_replay_commands(frames, args, baseline_q)
     if args.control_mode == "raise_template":
@@ -1066,7 +1161,7 @@ class ReplayFeedbackGate:
         if arm_status is not None:
             source = Path(__file__).resolve().parent
             if official_ik_controls_waist(args):
-                model_path = source.parents[2] / "tiangong2pro_ik_v0.2 2" / "tiangong2pro_ik_v0.2" / "tiangong2pro_ik" / "tienkung2_pro" / "urdf" / "tiangong2.0_pro.urdf"
+                model_path = source.parents[1] / "third_party" / "tiangong2pro_ik" / "tiangong2pro_ik" / "tienkung2_pro" / "urdf" / "tiangong2.0_pro.urdf"
                 joint = ET.parse(model_path).getroot().find(f"joint[@name='{WAIST_JOINT_NAME}']/limit")
                 if joint is None:
                     raise ValueError("官方 URDF 缺少腰部机械限位")
@@ -1338,6 +1433,10 @@ def restore_command(
 
 
 def resolve_replay_baseline(args: argparse.Namespace, status_q: np.ndarray | None) -> tuple[np.ndarray, str]:
+    if args.control_mode == "skeleton":
+        if status_q is not None:
+            return np.asarray(status_q, dtype=float).copy(), "robot_status_before_automatic_alignment"
+        return NATURAL_DOWN_Q.copy(), "natural_down_offline_preview"
     if args.prepose == "natural_down":
         return NATURAL_DOWN_Q.copy(), "natural_down"
     if status_q is not None:
@@ -1362,6 +1461,91 @@ def prepose_to_baseline(
         baseline_waist, duration=args.prepose_seconds,
     )
     print_json_line("PREPOSE_BASELINE", {"mode": args.prepose, "seconds": args.prepose_seconds, "positions": baseline_q})
+
+
+def execute_skeleton_replay(
+    args: argparse.Namespace, client: roslibpy.Ros, status_buffer: ArmStatusBuffer,
+    frames: list[dict[str, Any]], baseline_q: np.ndarray,
+    hand_status_buffers: dict[str, HandStatusBuffer],
+    hand_baselines: dict[str, tuple[float, ...]], hand_control_config: HandControlConfig,
+) -> int:
+    """Align once without prepose, then solve every frame from measured feedback."""
+    validate_skeleton_replay_options(args)
+    safety = ReplayFeedbackGate(args, client, status_buffer, None, hand_status_buffers, hand_control_config, baseline_q)
+    retargeter = make_skeleton_retargeter(args)
+    startup = make_skeleton_startup_gate(args)
+    templates = make_motor_templates(args.control_side, args.spd, args.cur)
+    cmd_topic = None
+    hand_topics: dict[str, roslibpy.Topic] = {}
+    last_hands: dict[str, tuple[float, ...] | None] = {}
+    sidecar = None
+    aligned = False
+    interval = 1.0 / args.rate
+    try:
+        if hand_control_config.publish_enabled and hand_ik_enabled(args):
+            sidecar = Revo2HandIkSidecar(hand_ik_config_from_args(args))
+        for index, frame in enumerate(frames):
+            solve_started_at = time.monotonic()
+            current_q, _ = safety.snapshot()
+            hand_output = None
+            if sidecar is not None:
+                result = sidecar.solve_replay_frame(frame)
+                hand_output = {}
+                if result.left_calibrated:
+                    hand_output["left"] = map_hand_radians(result.joint_positions, "left", hand_control_config)
+                if result.right_calibrated:
+                    hand_output["right"] = map_hand_radians(result.joint_positions, "right", hand_control_config)
+            current_q, _ = safety.snapshot()
+            if not aligned:
+                status = observe_skeleton_startup(startup, time.monotonic(), frame, current_q)
+                if status.ready:
+                    baseline_q = safety.arm_vector(status.robot_baseline_q)
+                    retargeter.align(status.window_frames, baseline_q)
+                    safety.baseline_q = baseline_q.copy()
+                    current_q, _ = safety.snapshot()
+                    cmd_topic = roslibpy.Topic(client, ARM_CMD_TOPIC, ARM_CMD_TYPE)
+                    cmd_topic.advertise()
+                    hand_topics = advertise_hand_command_topics(client, args, hand_control_config)
+                    last_hands = {side: None for side in hand_topics}
+                    aligned = True
+                    print_json_line("SKELETON_AUTO_ALIGNED", {"frame": index + 1, "window_frames": len(status.window_frames), "baseline": baseline_q})
+            if aligned:
+                current_q, _ = safety.snapshot()
+                command = retargeter.command_from_frame(
+                    frame, current_q, last_q_cmd=safety.last_arm_command,
+                    timestamp=float(frame["receive_time"]),
+                )
+                if command.waist_position is not None:
+                    raise RuntimeError("skeleton 回放不得产生腰部命令")
+                validate_hand_output(hand_output, hand_topics)
+                require_fresh_feedback(solve_started_at, time.monotonic(), MAX_ARM_STATUS_AGE_SECONDS, "skeleton IK result")
+                publish_command(cmd_topic, command, templates, safety=safety)
+                publish_hand_output(hand_output, hand_topics, hand_status_buffers, last_hands, hand_control_config, safety=safety)
+            remaining = solve_started_at + interval - time.monotonic()
+            if remaining > 0:
+                time.sleep(remaining)
+        if not aligned:
+            raise RuntimeError("骨架回放未取得稳定启动窗口，运动命令保持停发")
+        restore_baselines(args, safety, hand_topics, hand_baselines, last_hands, cmd_topic, templates, baseline_q)
+        print("PASS skeleton replay published and baseline restored")
+        return 0
+    except KeyboardInterrupt:
+        print("ABORT_REPLAY interrupted; further motion commands stopped")
+        return 130
+    except Exception as exc:
+        print(f"ABORT_REPLAY {exc}; further motion commands stopped")
+        return 14
+    finally:
+        for topic in ([cmd_topic] if cmd_topic is not None else []) + list(hand_topics.values()):
+            try:
+                topic.unadvertise()
+            except Exception:
+                pass
+        if sidecar is not None:
+            try:
+                sidecar.close()
+            except Exception:
+                pass
 
 
 def execute_ik_replay_streaming(
@@ -1873,6 +2057,8 @@ def execute_replay(
 
 def main() -> int:
     args = parse_args()
+    if args.control_mode == "skeleton":
+        validate_skeleton_replay_options(args)
     try:
         hand_control_raw = json.loads(args.hand_control_json)
     except json.JSONDecodeError as exc:
@@ -2037,6 +2223,15 @@ def main() -> int:
                     "motor_id": WAIST_MOTOR_ID,
                     "position": baseline_waist,
                 },
+            )
+
+        if args.execute and args.control_mode == "skeleton":
+            if status_buffer is None or client is None:
+                raise RuntimeError("skeleton execute requires rosbridge status buffer")
+            confirm_execution(args, {"command_count": len(frames), "control_side": args.control_side, "control_mode": "skeleton"})
+            return execute_skeleton_replay(
+                args, client, status_buffer, frames, baseline_q,
+                hand_status_buffers, hand_baselines, hand_control_config,
             )
 
         if args.execute and args.streaming and args.control_mode == "ik":

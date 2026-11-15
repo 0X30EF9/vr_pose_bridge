@@ -113,7 +113,7 @@ ENABLE_IK_ERROR_LOG = False
 # 本地日志
 ENABLE_LOCAL_LOG = True
 LOG_TO_CONSOLE = False
-LOG_DIR = Path(__file__).resolve().parent / "log"
+LOG_DIR = Path(__file__).resolve().parents[1] / "data" / "logs"
 LOG_FILE_NAME = "mocap_ik_http_sim_node.log"
 LOG_MOCAP_DATA = True
 LOG_IK_RESULT = True

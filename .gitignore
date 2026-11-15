@@ -4,7 +4,8 @@
 log/
 
 # 动捕 UDP 录制数据
-mocap_teleop/IK/data/vr_udp_capture/
+/app/data/*
+!/app/data/.gitkeep
 
 # PyInstaller / 打包产物
 **/build/
@@ -16,8 +17,8 @@ mocap_teleop/IK/data/vr_udp_capture/
 # ---------- 机器人网格资产（体积过大，需本地自行放置）----------
 # walker_tienkung_ei.urdf 引用的 STL 网格约 599 MB，不纳入版本库。
 # 需要可视化/IK 网格时，请把 meshes 目录放回：
-#   mocap_teleop/IK/IK-source/models/walker_tienkung_ei_description/meshes/
-mocap_teleop/IK/IK-source/models/walker_tienkung_ei_description/meshes/
+#   app/src/models/walker_tienkung_ei_description/meshes/
+app/src/models/walker_tienkung_ei_description/meshes/
 
 # ---------- Python ----------
 __pycache__/

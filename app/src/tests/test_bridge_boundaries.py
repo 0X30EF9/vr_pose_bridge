@@ -53,6 +53,8 @@ def load_bridge():
 class BridgeBoundariesTest(unittest.TestCase):
     def setUp(self):
         self.module = load_bridge()
+        # These regressions cover the existing explicit IK path.
+        self.module.CONTROL_MODE = "ik"
         self.clock = SimpleNamespace(now=100.0, wall=1000.0)
         self.module.time = SimpleNamespace(
             monotonic=lambda: self.clock.now,

@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 ROOT_DIR = Path(__file__).resolve().parent
-SOURCE_DIR = ROOT_DIR / "IK-source"
+SOURCE_DIR = ROOT_DIR / "src"
 CONFIG_PATH = ROOT_DIR / "run_ik_config.json"
 RECORDER_ENTRY = SOURCE_DIR / "mocap_udp_recorder.py"
 TELEOP_ENTRY = SOURCE_DIR / "mocap_ros_2_bridge_node.py"
@@ -27,12 +27,12 @@ VISUALIZER_ENTRY = SOURCE_DIR / "visualize_joint_commands.py"
 DEFAULT_CAPTURE_DIR = ROOT_DIR / "data" / "vr_udp_capture"
 
 REQUIRED_MODULES = ("numpy", "scipy", "roslibpy")
-TELEOP_REQUIRED_MODULES = ("rclpy", "pinocchio", "casadi")
+TELEOP_REQUIRED_MODULES = ("rclpy", "pinocchio")
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "runtime": {
-        "python": sys.executable,
-        "conda_env": "mocap_ik",
+        "python": None,
+        "conda_env": None,
         "pause_after_action": True,
     },
     "rosbridge": {
@@ -104,17 +104,17 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "huber_delta": 0.010,
     },
     "replay": {
-        "input": "",
+        "input": None,
         "use_latest_capture": True,
         "control_side": "both",
-        "control_mode": "ik",
-        "ik_backend": "tiangong2pro_official",
+        "control_mode": "skeleton",
+        "ik_backend": "teleop_dls",
         "ik_task": "pose",
         "rate": 10.0,
         "max_frames": 200,
         "stride": 1,
-        "position_scale": 0.45,
-        "orientation_scale": 0.25,
+        "position_scale": 1.0,
+        "orientation_scale": 1.0,
         "max_position_step": 0.25,
         "max_angular_step": 0.8,
         "max_joint_delta_per_step": 0.06,
@@ -131,7 +131,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "spd": 0.7,
         "cur": 2.0,
         "restore_seconds": 3.0,
-        "prepose": "natural_down",
+        "prepose": "none",
         "prepose_seconds": 3.0,
         "prepose_steps": 30,
         "use_robot_status": False,
@@ -162,11 +162,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "device_mode": "glove",
         "skip_check": False,
         "control_side": "both",
-        "control_mode": "ik",
-        "ik_backend": "tiangong2pro_official",
+        "control_mode": "skeleton",
+        "ik_backend": "teleop_dls",
         "ik_task": "pose",
-        "position_scale": 0.45,
-        "orientation_scale": 0.25,
+        "position_scale": 1.0,
+        "orientation_scale": 1.0,
         "safe_teleop": True,
         "safe_rate": 8.0,
         "max_joint_delta_per_step": 0.06,
@@ -190,9 +190,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "hand_ik": {
         "compute": True,
-        "sdk_root": "vendor/revo2_hand_ik_sdk",
-        "sdk_config": "vendor/revo2_hand_ik_sdk/bin/conf/mocap_ik/mocap_ik_revo2_dual_hand_sdk.json",
-        "library": "vendor/revo2_hand_ik_sdk/lib/librevo2_ik_sdk.so.0.10.35",
+        "sdk_root": "../third_party/revo2_hand_ik_sdk",
+        "sdk_config": "../third_party/revo2_hand_ik_sdk/bin/conf/mocap_ik/mocap_ik_revo2_dual_hand_sdk.json",
+        "library": "../third_party/revo2_hand_ik_sdk/lib/librevo2_ik_sdk.so.0.10.35",
         "timeout": 5.0,
         "diagnostic_enabled": False,
         "diagnostic_csv": "data/diagnostics/revo2_hand_ik.csv",
@@ -268,9 +268,10 @@ def add_teleop_startup_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--startup-max-home-rms", type=float, default=None, help="自然下垂保持窗口最大手部位置 RMS，单位 m")
 
 
-def apply_teleop_startup_config(args: argparse.Namespace, config: dict[str, Any]) -> None:
+def apply_teleop_startup_config(args: argparse.Namespace, config: dict[str, Any], section: str = "teleop") -> None:
     for key in TELEOP_STARTUP_CONFIG_KEYS:
-        setattr(args, key, coalesce(getattr(args, key, None), cfg_get(config, "teleop", key)))
+        default = config.get(section, {}).get(key, cfg_get(config, "teleop", key))
+        setattr(args, key, coalesce(getattr(args, key, None), default))
 
 
 def append_teleop_startup_cli(command: list[str], args: argparse.Namespace) -> None:
@@ -326,13 +327,13 @@ def parse_args() -> argparse.Namespace:
 
     subparsers.add_parser("menu", help="打开交互式 CLI 菜单")
 
-    combined_parser = subparsers.add_parser("calibrate", help="先完成腕点标定，再生成工作空间标定")
+    combined_parser = subparsers.add_parser("calibrate", aliases=("legacy-calibrate",), help="legacy 高级工具：腕点与工作空间人工标定，skeleton 模式不使用")
     calibration_parsers = []
     for name, stages in (
         ("wrist-calibrate", ("all", "capture", "analyze", "validate")),
         ("workspace-calibrate", ("guide", "all", "capture", "analyze", "scan", "report")),
     ):
-        calibration_parser = subparsers.add_parser(name, help="运行标定工具")
+        calibration_parser = subparsers.add_parser(name, aliases=("legacy-" + name,), help="legacy 高级人工标定工具，skeleton 模式不使用")
         calibration_parser.add_argument("--stage", choices=stages, default="all")
         calibration_parser.add_argument("--input", type=Path, default=None)
         calibration_parser.add_argument("--capture-output", type=Path, default=None)
@@ -349,13 +350,14 @@ def parse_args() -> argparse.Namespace:
 
     check_parser = subparsers.add_parser("check", help="检查目录、入口文件和 Python 依赖")
     check_parser.add_argument("--teleop", action="store_true", default=None, help="同时检查遥操作所需 ROS2/Pinocchio 依赖")
+    check_parser.add_argument("--ik-backend", choices=("teleop_dls", "tiangong2pro_official", "ubtech_casadi"), default=None, help="检查指定后端；仅 legacy 官方后端需要 CasADi")
 
     test_parser = subparsers.add_parser("test", help="执行编译检查和最小 UDP 数采自测")
     test_parser.add_argument("--port", type=int, default=None, help="自测使用的本机 UDP 端口")
     test_parser.add_argument("--output", type=Path, default=None, help="自测输出目录")
 
     visualize_parser = subparsers.add_parser("visualize", help="从遥操作日志生成离线关节角曲线")
-    visualize_parser.add_argument("input", nargs="?", type=Path, default=SOURCE_DIR / "log" / "mocap_ik_bridge.log", help="遥操作日志或纯 JSONL")
+    visualize_parser.add_argument("input", nargs="?", type=Path, default=ROOT_DIR / "data" / "logs" / "mocap_ik_bridge.log", help="遥操作日志或纯 JSONL")
     visualize_parser.add_argument("--output", "-o", type=Path, default=ROOT_DIR / "data" / "visualization" / "joint_commands.html", help="输出的单文件 HTML")
     visualize_parser.add_argument("--session", choices=("latest", "all"), default="latest", help="只看最近会话或全部日志")
     visualize_parser.add_argument("--max-points", type=int, default=5000, help="每条轨迹最多保留的绘图点数")
@@ -377,14 +379,14 @@ def parse_args() -> argparse.Namespace:
     teleop_parser.add_argument("--device-mode", choices=("glove", "controller", "auto"), default=None, help="VR 设备模式：glove=手套，controller=手柄，auto=按已验证帧头分派")
     teleop_parser.add_argument("--skip-check", action="store_true", default=None, help="跳过启动前依赖检查")
     teleop_parser.add_argument("--control-side", choices=("left", "right", "both"), default=None, help="实时动捕控制侧")
-    teleop_parser.add_argument("--control-mode", choices=("direct", "ik", "raise_template"), default=None, help="direct=骨架直映射；ik=末端位姿 IK；raise_template=立正/侧平举/前平举模板映射")
+    teleop_parser.add_argument("--control-mode", choices=("skeleton", "direct", "ik", "raise_template"), default=None, help="skeleton=默认骨架自动映射；direct/ik/raise_template=legacy 高级兼容")
     teleop_parser.add_argument("--ik-backend", choices=("teleop_dls", "tiangong2pro_official", "ubtech_casadi"), default=None, help="IK 求解后端")
     teleop_parser.add_argument("--ik-task", choices=("pose", "position_only"), default=None, help="IK 任务类型：pose=官方完整 TCP 位姿 IK；position_only=实验性锁腕位置 IK")
-    teleop_parser.add_argument("--position-scale", type=float, default=None, help="人体相对位移到机器人目标的整体位置增益")
-    teleop_parser.add_argument("--workspace-calibration", type=Path, default=None, help="可选工作空间标定；未指定时使用相对映射，指定文件无效时报错")
-    teleop_parser.add_argument("--wrist-calibration", type=Path, default=None, help="可选人体 hand→wrist 标定；未指定时使用 skeleton 腕点，指定文件无效时报错")
+    teleop_parser.add_argument("--position-scale", type=float, default=None, help="骨段方向映射增益，默认 1.0；legacy ik 中表示位置增益")
+    teleop_parser.add_argument("--workspace-calibration", type=Path, default=None, help="仅 legacy ik 模式可用；skeleton 拒绝人工标定文件")
+    teleop_parser.add_argument("--wrist-calibration", type=Path, default=None, help="仅 legacy ik 模式可用；skeleton 直接读取骨架腕点")
     teleop_parser.add_argument("--hand-only", action="store_true", default=None, help="只运行双手 IK，强制停发手臂和腰部")
-    teleop_parser.add_argument("--orientation-scale", type=float, default=None, help="pose 模式的世界系相对手腕旋转增益；默认 0.25 优先保证 TCP 位置")
+    teleop_parser.add_argument("--orientation-scale", type=float, default=None, help="相对手部旋转增益，默认 1.0")
     teleop_parser.add_argument("--safe-teleop", choices=("true", "false"), default=None, help="是否启用低速安全遥操作门控")
     teleop_parser.add_argument("--safe-rate", type=float, default=None, help="安全模式下最大命令发布频率")
     teleop_parser.add_argument("--max-joint-delta-per-step", type=float, default=None, help="实时遥操作单次下发最大关节变化")
@@ -425,22 +427,23 @@ def parse_args() -> argparse.Namespace:
     replay_parser.add_argument("--host", default=None, help="rosbridge 地址")
     replay_parser.add_argument("--port", type=int, default=None, help="rosbridge 端口")
     replay_parser.add_argument("--control-side", choices=("left", "right", "both"), default=None, help="回放控制侧")
-    replay_parser.add_argument("--control-mode", choices=("direct", "ik", "raise_template"), default=None, help="direct=骨架直映射；ik=末端位姿 IK；raise_template=立正/侧平举/前平举模板映射")
+    replay_parser.add_argument("--control-mode", choices=("skeleton", "direct", "ik", "raise_template"), default=None, help="skeleton=默认骨架自动映射；direct/ik/raise_template=legacy 高级兼容")
     replay_parser.add_argument("--ik-backend", choices=("teleop_dls", "tiangong2pro_official", "ubtech_casadi"), default=None, help="IK 求解后端")
     replay_parser.add_argument("--ik-task", choices=("pose", "position_only"), default=None, help="IK 任务类型：pose=官方完整 TCP 位姿 IK；position_only=实验性锁腕位置 IK")
     replay_parser.add_argument("--rate", type=float, default=None, help="回放频率")
     replay_parser.add_argument("--max-frames", type=int, default=None, help="最多回放/预览多少帧")
     replay_parser.add_argument("--stride", type=int, default=None, help="按帧间隔抽样")
-    replay_parser.add_argument("--position-scale", type=float, default=None, help="人体相对位移到机器人目标的整体位置增益")
-    replay_parser.add_argument("--workspace-calibration", type=Path, default=None, help="可选工作空间标定；未指定时使用相对映射，指定文件无效时报错")
-    replay_parser.add_argument("--wrist-calibration", type=Path, default=None, help="可选人体 hand→wrist 标定；未指定时使用 skeleton 腕点，指定文件无效时报错")
+    replay_parser.add_argument("--position-scale", type=float, default=None, help="骨段方向映射增益，默认 1.0；legacy ik 中表示位置增益")
+    replay_parser.add_argument("--workspace-calibration", type=Path, default=None, help="仅 legacy ik 模式可用；skeleton 拒绝人工标定文件")
+    replay_parser.add_argument("--wrist-calibration", type=Path, default=None, help="仅 legacy ik 模式可用；skeleton 直接读取骨架腕点")
     replay_parser.add_argument("--hand-only", action="store_true", default=None, help="只回放双手 IK，强制停发手臂和腰部")
-    replay_parser.add_argument("--orientation-scale", type=float, default=None, help="pose 模式的世界系相对手腕旋转增益；默认 0.25 优先保证 TCP 位置")
+    replay_parser.add_argument("--orientation-scale", type=float, default=None, help="相对手部旋转增益，默认 1.0")
     replay_parser.add_argument("--max-position-step", type=float, default=None, help="单帧手部位置跳变阈值，单位 m")
     replay_parser.add_argument("--max-angular-step", type=float, default=None, help="单帧手部姿态跳变阈值，单位 rad")
     replay_parser.add_argument("--max-joint-delta-per-step", type=float, default=None, help="IK 命令单帧关节限幅")
     replay_parser.add_argument("--max-command-delta-from-baseline", type=float, default=None, help="相对 baseline 的最大关节偏移")
     add_skeleton_retarget_args(replay_parser)
+    add_teleop_startup_args(replay_parser)
     add_hand_ik_launcher_args(replay_parser)
     replay_parser.add_argument("--spd", type=float, default=None, help="电机速度参数")
     replay_parser.add_argument("--cur", type=float, default=None, help="电机电流参数")
@@ -454,9 +457,16 @@ def parse_args() -> argparse.Namespace:
     replay_parser.add_argument("--allow-risk", action="store_true", default=None, help="允许超过默认数据/命令风险阈值")
     replay_parser.add_argument("--streaming", action="store_true", default=None, help="execute+ik 时边算 IK 边发布")
     replay_parser.add_argument("--execute", action="store_true", default=None, help="真正发布回放命令")
+    replay_parser.add_argument("--dry-run", action="store_true", default=None, help="仅离线预览，覆盖配置中的 execute/use_robot_status，不连接机器人")
     replay_parser.add_argument("--yes", action="store_true", default=None, help="跳过二次确认，配合 --execute 使用")
 
-    return apply_config(parser.parse_args())
+    args = parser.parse_args()
+    if args.command and args.command.startswith("legacy-"):
+        args.command = args.command.removeprefix("legacy-")
+    try:
+        return apply_config(args)
+    except ValueError as exc:
+        parser.error(str(exc))
 
 
 def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -502,7 +512,7 @@ def apply_config(args: argparse.Namespace) -> argparse.Namespace:
     args.config = config_path
     args.launcher_config = config
 
-    args.python = coalesce(args.python, cfg_get(config, "runtime", "python"))
+    args.python = coalesce(args.python, cfg_get(config, "runtime", "python")) or sys.executable
     args.conda_env = coalesce(args.conda_env, cfg_get(config, "runtime", "conda_env"))
     if args.no_pause is None:
         args.no_pause = not bool(cfg_get(config, "runtime", "pause_after_action"))
@@ -517,6 +527,7 @@ def apply_config(args: argparse.Namespace) -> argparse.Namespace:
 
     if command == "check":
         args.teleop = coalesce(args.teleop, cfg_get(config, "environment", "basic_include_teleop"))
+        args.ik_backend = coalesce(args.ik_backend, cfg_get(config, "teleop", "ik_backend"))
         return args
 
     if command == "test":
@@ -525,8 +536,8 @@ def apply_config(args: argparse.Namespace) -> argparse.Namespace:
         return args
 
     if command == "visualize":
-        args.input = args.input.expanduser()
-        args.output = args.output.expanduser()
+        args.input = args.input.expanduser().resolve()
+        args.output = args.output.expanduser().resolve()
         return args
 
     if command == "record":
@@ -606,6 +617,7 @@ def apply_teleop_config(args: argparse.Namespace, config: dict[str, Any]) -> Non
     apply_hand_ik_config(args, config)
     robot_command = coalesce(args.robot_command, cfg_get(config, "teleop", "robot_command"))
     args.robot_command = "true" if config_bool(robot_command) else "false"
+    validate_mapping_options(args)
 
 
 def apply_arm_test_config(args: argparse.Namespace, config: dict[str, Any]) -> None:
@@ -672,7 +684,23 @@ def apply_replay_config(args: argparse.Namespace, config: dict[str, Any]) -> Non
     args.allow_risk = coalesce(args.allow_risk, cfg_get(config, "replay", "allow_risk"))
     args.streaming = coalesce(args.streaming, cfg_get(config, "replay", "streaming"))
     args.execute = coalesce(args.execute, cfg_get(config, "replay", "execute"))
+    if getattr(args, "dry_run", False):
+        args.execute = False
+        args.use_robot_status = False
     args.yes = coalesce(args.yes, cfg_get(config, "replay", "yes"))
+    apply_teleop_startup_config(args, config, "replay")
+    validate_mapping_options(args)
+
+
+def validate_mapping_options(args: argparse.Namespace) -> None:
+    if args.control_mode != "skeleton":
+        return
+    if args.workspace_calibration is not None or args.wrist_calibration is not None:
+        raise ValueError("skeleton 模式自动读取完整骨架，不接受人工标定路径；移除 runtime_path/标定参数，或显式选择 legacy --control-mode ik")
+    if args.ik_backend != "teleop_dls":
+        raise ValueError("skeleton 模式使用纯 Pinocchio teleop_dls 后端；旧官方后端请显式选择 legacy --control-mode ik")
+    if args.ik_task != "pose":
+        raise ValueError("skeleton 模式联合映射骨段方向与手部姿态，必须使用 --ik-task pose")
 
 
 def command_prefix(args: argparse.Namespace) -> list[str]:
@@ -693,7 +721,7 @@ def check_import(module_name: str) -> bool:
     return importlib.util.find_spec(module_name) is not None
 
 
-def check_environment(include_teleop: bool = False) -> int:
+def check_environment(include_teleop: bool = False, ik_backend: str = "teleop_dls") -> int:
     print(f"ROOT_DIR={ROOT_DIR}")
     print(f"SOURCE_DIR={SOURCE_DIR}")
     print(f"PYTHON={sys.executable}")
@@ -716,6 +744,8 @@ def check_environment(include_teleop: bool = False) -> int:
     modules = list(REQUIRED_MODULES)
     if include_teleop:
         modules.extend(TELEOP_REQUIRED_MODULES)
+        if ik_backend in {"tiangong2pro_official", "ubtech_casadi"}:
+            modules.append("casadi")
 
     for module_name in modules:
         exists = check_import(module_name)
@@ -778,7 +808,15 @@ def run_visualize(args: argparse.Namespace) -> int:
     return run_child(command)
 
 
+def effective_hand_control_json(args: argparse.Namespace) -> str:
+    settings = copy.deepcopy(args.launcher_config["hand_control"])
+    if args.hand_ik_compute != "true":
+        settings["publish"] = False
+    return json.dumps(settings, separators=(",", ":"))
+
+
 def run_teleop(args: argparse.Namespace) -> int:
+    validate_mapping_options(args)
     require_file(TELEOP_ENTRY)
     if args.device_mode == "controller":
         print(
@@ -790,7 +828,7 @@ def run_teleop(args: argparse.Namespace) -> int:
         )
         return 2
     if not args.skip_check:
-        check_code = check_environment(include_teleop=True)
+        check_code = check_environment(include_teleop=True, ik_backend=args.ik_backend)
         if check_code != 0:
             print("遥操作依赖检查未通过。若你已在 ROS2 环境中启动，可在配置 teleop.skip_check=true 跳过。")
             return check_code
@@ -807,7 +845,7 @@ def run_teleop(args: argparse.Namespace) -> int:
         "--safe-rate", str(args.safe_rate),
         "--max-joint-delta-per-step", str(args.max_joint_delta_per_step),
         "--max-command-delta-from-baseline", str(args.max_command_delta_from_baseline),
-        "--hand-control-json", json.dumps(args.launcher_config["hand_control"], separators=(",", ":")),
+        "--hand-control-json", effective_hand_control_json(args),
         "--robot-command", str(args.robot_command),
     ]
     if args.workspace_calibration is not None:
@@ -905,7 +943,7 @@ def latest_capture_session(args: argparse.Namespace) -> Path | None:
 
 def resolve_replay_input(args: argparse.Namespace) -> Path | None:
     if args.input is not None:
-        return Path(args.input).expanduser()
+        return Path(args.input).expanduser().resolve()
     if bool(cfg_get(args.launcher_config, "replay", "use_latest_capture")):
         selected = latest_capture_session(args)
         if selected is not None:
@@ -915,6 +953,7 @@ def resolve_replay_input(args: argparse.Namespace) -> Path | None:
 
 
 def run_replay(args: argparse.Namespace) -> int:
+    validate_mapping_options(args)
     require_file(REPLAY_ENTRY)
     input_path = resolve_replay_input(args)
     if input_path is None:
@@ -953,7 +992,7 @@ def run_replay(args: argparse.Namespace) -> int:
         "--max-command-delta-from-baseline",
         str(args.max_command_delta_from_baseline),
         "--hand-control-json",
-        json.dumps(args.launcher_config["hand_control"], separators=(",", ":")),
+        effective_hand_control_json(args),
         "--spd",
         str(args.spd),
         "--cur",
@@ -978,6 +1017,7 @@ def run_replay(args: argparse.Namespace) -> int:
         require_file(args.wrist_calibration)
         command.extend(("--wrist-calibration", str(args.wrist_calibration)))
     append_skeleton_retarget_cli(command, args)
+    append_teleop_startup_cli(command, args)
     append_hand_ik_cli(command, args)
     if args.hand_only:
         command.append("--hand-only")
@@ -1099,6 +1139,7 @@ def run_compile_check(args: argparse.Namespace) -> int:
         SOURCE_DIR / "revo2_hand_ik_worker.py",
         SOURCE_DIR / "teleop_ik_adapters.py",
         SOURCE_DIR / "teleop_ik_core.py",
+        SOURCE_DIR / "teleop_skeleton_retarget.py",
         SOURCE_DIR / "teleop_ik_ubtech_casadi.py",
         SOURCE_DIR / "teleop_ik_types.py",
         SOURCE_DIR / "teleop_mocap_calibration.py",
@@ -1114,29 +1155,39 @@ def run_compile_check(args: argparse.Namespace) -> int:
 
 
 def build_fake_mocap_packet() -> bytes:
-    fmt = "<BBHHI 3f 188f 6H 6H 141f I"
-    values: list[Any] = [1, 2, 3, 4, 123456]
-    values += [0.0, 0.0, 0.0]
-    rotations = [0.0] * 188
-    positions = [0.0] * 141
-    rotations[5 * 4 + 3] = 1.0
-    rotations[9 * 4 + 3] = 1.0
-    positions[5 * 3:5 * 3 + 3] = [0.1, 0.2, 0.3]
-    positions[9 * 3:9 * 3 + 3] = [0.4, 0.5, 0.6]
-    values.extend(rotations)
-    values.extend([0] * 6)
-    values.extend([0] * 6)
-    values.extend(positions)
-    values.append(789)
-    return struct.pack(fmt, *values)
+    module_name = "_launcher_self_test_protocol"
+    protocol = sys.modules.get(module_name)
+    if protocol is None:
+        spec = importlib.util.spec_from_file_location(module_name, PROTOCOL_ENTRY)
+        if spec is None or spec.loader is None:
+            raise RuntimeError("无法加载 64 节点协议自测")
+        protocol = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = protocol
+        spec.loader.exec_module(protocol)
+    positions = {
+        "left_shoulder": (0.0, 0.22, 1.45), "right_shoulder": (0.0, -0.22, 1.45),
+        "left_elbow": (0.0, 0.22, 1.12), "right_elbow": (0.0, -0.22, 1.12),
+        "left_wrist": (0.0, 0.22, 0.78), "right_wrist": (0.0, -0.22, 0.78),
+        "left_hand": (0.0, 0.22, 0.72), "right_hand": (0.0, -0.22, 0.72),
+        "left_hip": (0.0, 0.14, 0.95), "right_hip": (0.0, -0.14, 0.95),
+        "chest": (0.0, 0.0, 1.30), "waist": (0.0, 0.0, 0.95),
+    }
+    timestamp_us = time.time_ns() // 1000
+    frame = protocol.MocapFrame(
+        timestamp_us / 1e6, timestamp_us, timestamp_us / 1e6,
+        tuple(protocol.JointPose(positions.get(name, (0.0, 0.0, 0.0)), (0.0, 0.0, 0.0, 1.0))
+              for name in protocol.MOCAP_JOINT_NAMES),
+        "synthetic_localhost_self_test",
+    )
+    return protocol.encode_mocap_g2_frame(frame)
 
 
 def send_fake_udp(port: int) -> None:
     time.sleep(0.5)
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        packet = build_fake_mocap_packet()
         for _ in range(30):
+            packet = build_fake_mocap_packet()
             sock.sendto(packet, ("127.0.0.1", port))
             time.sleep(0.1)
         print(f"TEST_UDP_SENT bytes={len(packet)} port={port}")
@@ -1302,9 +1353,11 @@ def make_menu_args(base: argparse.Namespace, command: str, **values: Any) -> arg
             "allow_risk",
             "streaming",
             "execute",
+            "dry_run",
             "yes",
         )
         ensure_none_fields(*SKELETON_CONFIG_KEYS)
+        ensure_none_fields(*TELEOP_STARTUP_CONFIG_KEYS)
         ensure_none_fields(
             "hand_ik_compute",
             "hand_ik_sdk_root",
@@ -1367,7 +1420,7 @@ def make_menu_args(base: argparse.Namespace, command: str, **values: Any) -> arg
 def run_menu_teleop(base: argparse.Namespace) -> int:
     config = base.launcher_config
     device_mode = prompt_device_mode(str(cfg_get(config, "teleop", "device_mode")))
-    print("遥操作模式: 1=完整手臂+腰部+双手，2=仅双手")
+    print("遥操作范围: 1=双臂+双手，2=仅双手")
     hand_only_choice = prompt_text("选择遥操作模式", "2" if cfg_get(config, "teleop", "hand_only") else "1")
     if hand_only_choice not in {"1", "2"}:
         print("遥操作模式必须是 1 或 2。")
@@ -1431,7 +1484,7 @@ def run_menu_visualize(base: argparse.Namespace) -> int:
         make_menu_args(
             base,
             "visualize",
-            input=SOURCE_DIR / "log" / "mocap_ik_bridge.log",
+        input=ROOT_DIR / "data" / "logs" / "mocap_ik_bridge.log",
             output=ROOT_DIR / "data" / "visualization" / "joint_commands.html",
             session="latest",
             max_points=5000,
@@ -1454,6 +1507,7 @@ def run_menu_arm_test(base: argparse.Namespace) -> int:
 def print_menu(base: argparse.Namespace) -> None:
     print("\n=== IK 动捕遥操作控制台 ===")
     print(f"配置文件: {base.config}")
+    print("默认：64 节点骨架自动映射；双臂自然下垂静止启动，无需转腕/六方向标定。")
     print("1. 环境检测")
     print("2. VR UDP 数采")
     print("3. 数采动作回放")
@@ -1482,7 +1536,10 @@ def run_environment_menu(base: argparse.Namespace) -> int:
         if choice == "0":
             return 0
         if choice == "1":
-            code = check_environment(include_teleop=cfg_get(base.launcher_config, "environment", "basic_include_teleop"))
+            code = check_environment(
+                include_teleop=cfg_get(base.launcher_config, "environment", "basic_include_teleop"),
+                ik_backend=cfg_get(base.launcher_config, "teleop", "ik_backend"),
+            )
         elif choice == "2":
             code = run_test(make_menu_args(base, "test"))
         elif choice == "3":
@@ -1524,7 +1581,7 @@ def main() -> int:
     if args.command is None or args.command == "menu":
         return run_interactive_menu(args)
     if args.command == "check":
-        return check_environment(include_teleop=args.teleop)
+        return check_environment(include_teleop=args.teleop, ik_backend=args.ik_backend)
     if args.command == "test":
         return run_test(args)
     if args.command == "visualize":

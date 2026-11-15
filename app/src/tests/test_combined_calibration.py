@@ -179,6 +179,8 @@ class RuntimeCalibrationConfigurationTest(unittest.TestCase):
     ) -> Namespace:
         config = {
             "runtime": {"python": sys.executable, "conda_env": None},
+            "teleop": {"control_mode": "ik"},
+            "replay": {"control_mode": "ik"},
             "workspace_calibration": {"calibration_output": "old-workspace.json"},
             "wrist_calibration": {"calibration_output": "old-wrist.json"},
         }
@@ -248,7 +250,7 @@ class RuntimeCalibrationConfigurationTest(unittest.TestCase):
             environment["PYTHONIOENCODING"] = "utf-8"
             result = subprocess.run(
                 [sys.executable, str(RUN_IK_PATH), "--config", str(args.config),
-                 "workspace-calibrate", "--stage", "guide"],
+                  "legacy-workspace-calibrate", "--stage", "guide"],
                 capture_output=True, text=True, encoding="utf-8", timeout=10, env=environment,
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

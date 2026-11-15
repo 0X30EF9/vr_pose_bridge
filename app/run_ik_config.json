@@ -1,7 +1,7 @@
 {
   "runtime": {
-    "python": "/home/lenovo/miniconda3/envs/mocap_ik/bin/python",
-    "conda_env": "mocap_ik",
+    "python": null,
+    "conda_env": null,
     "pause_after_action": true
   },
   "rosbridge": {
@@ -73,17 +73,17 @@
     "huber_delta": 0.010
   },
   "replay": {
-    "input": "data/vr_udp_capture/vr_20260715_102431.csv",   
+    "input": null,
     "use_latest_capture": true,
     "control_side": "both",
-    "control_mode": "ik",
-    "ik_backend": "tiangong2pro_official",
+    "control_mode": "skeleton",
+    "ik_backend": "teleop_dls",
     "ik_task": "pose",
     "rate": 10.0,
     "max_frames": 15000,
     "stride": 1,
-    "position_scale": 0.35,
-    "orientation_scale": 0.25,
+    "position_scale": 1.0,
+    "orientation_scale": 1.0,
     "max_position_step": 0.25,
     "max_angular_step": 0.8,
     "max_joint_delta_per_step": 0.06,
@@ -131,8 +131,8 @@
     "device_mode": "glove",
     "skip_check": false,
     "control_side": "both",
-    "control_mode": "ik",
-    "ik_backend": "tiangong2pro_official",
+    "control_mode": "skeleton",
+    "ik_backend": "teleop_dls",
     "ik_task": "pose",
     "position_scale": 1.0,
     "orientation_scale": 1.0,
@@ -159,9 +159,9 @@
   },
   "hand_ik": {
     "compute": true,
-    "sdk_root": "vendor/revo2_hand_ik_sdk",
-    "sdk_config": "vendor/revo2_hand_ik_sdk/bin/conf/mocap_ik/mocap_ik_revo2_dual_hand_sdk.json",
-    "library": "vendor/revo2_hand_ik_sdk/lib/librevo2_ik_sdk.so.0.10.35",
+    "sdk_root": "../third_party/revo2_hand_ik_sdk",
+    "sdk_config": "../third_party/revo2_hand_ik_sdk/bin/conf/mocap_ik/mocap_ik_revo2_dual_hand_sdk.json",
+    "library": "../third_party/revo2_hand_ik_sdk/lib/librevo2_ik_sdk.so.0.10.35",
     "timeout": 5.0,
     "diagnostic_enabled": false,
     "diagnostic_csv": "data/diagnostics/revo2_hand_ik.csv"

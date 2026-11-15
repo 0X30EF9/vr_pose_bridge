@@ -14,7 +14,7 @@ from typing import Any, Mapping, Sequence
 
 from teleop_joint_schema import ARM_JOINT_NAMES, HAND_JOINT_ORDER, arm_joint_names, joint_names_from_motor_ids
 
-DEFAULT_LOG = Path(__file__).resolve().parent / "log" / "mocap_ik_bridge.log"
+DEFAULT_LOG = Path(__file__).resolve().parents[1] / "data" / "logs" / "mocap_ik_bridge.log"
 DEFAULT_OUTPUT = Path(__file__).resolve().parent.parent / "data" / "visualization" / "joint_commands.html"
 ROBOT_URDF = (
     Path(__file__).resolve().parent

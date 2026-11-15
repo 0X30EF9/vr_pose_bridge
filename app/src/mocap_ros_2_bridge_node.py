@@ -29,8 +29,8 @@ CONTROL_RATE_HZ = 20.0
 TIME_WARNING_THRESHOLD_MS = (1.0 / CONTROL_RATE_HZ) * 1000.0 * 0.8
 
 # 控制模式：direct 走骨架直映射演示包络；ik 走末端 IK；raise_template 走固定平举动作模板。
-CONTROL_MODE = "ik"  # "direct" | "ik" | "raise_template"
-IK_SOLVER_BACKEND = "tiangong2pro_official"  # "teleop_dls" | "tiangong2pro_official"
+CONTROL_MODE = "skeleton"  # skeleton 默认自动映射；其余为高级兼容模式。
+IK_SOLVER_BACKEND = "teleop_dls"
 IK_TASK_MODE = "pose"  # "pose" | "position_only"
 CONTROL_SIDE = "both"  # "left" | "right" | "both"
 
@@ -46,6 +46,7 @@ from teleop_direct_retarget import (
     add_direct_retarget_arguments,
     direct_retarget_config_from_args,
 )
+from teleop_skeleton_retarget import SkeletonRetargeter, validate_skeleton_frame
 from teleop_hand_ik import (
     HandIkError,
     Revo2HandIkSidecar,
@@ -104,7 +105,7 @@ T_BASE_MOCAP = np.eye(4)
 # 目标映射模式。relative 使用第一帧动捕手腕作为人体 home，只把后续相对增量叠加到机器人 home wrist。
 MOCAP_TARGET_MODE = "relative"  # "relative" | "absolute"
 MOCAP_RELATIVE_POSITION_SCALE = 1.0
-MOCAP_RELATIVE_ORIENTATION_SCALE = 0.25
+MOCAP_RELATIVE_ORIENTATION_SCALE = 1.0
 WORKSPACE_CALIBRATION_PATH: Path | None = None
 WRIST_CALIBRATION_PATH: Path | None = None
 
@@ -146,7 +147,7 @@ HAND_ONLY_MODE = False
 # 本地日志。三类核心日志：接收到的动捕数据、IK 解算结果、发送给机器人的数据。
 ENABLE_LOCAL_LOG = True
 LOG_TO_CONSOLE = False
-LOG_DIR = Path(__file__).resolve().parent / "log"
+LOG_DIR = Path(__file__).resolve().parents[1] / "data" / "logs"
 LOG_FILE_NAME = "mocap_ik_bridge.log"
 LOG_MOCAP_DATA = True
 LOG_IK_RESULT = True
@@ -169,16 +170,28 @@ class MocapBridgeNode(Node):
         if CONTROL_SIDE not in {"left", "right", "both"}:
             raise ValueError(f"Unsupported CONTROL_SIDE: {CONTROL_SIDE}")
 
-        if CONTROL_MODE not in {"direct", "ik", "raise_template"}:
+        if CONTROL_MODE not in {"skeleton", "direct", "ik", "raise_template"}:
             raise ValueError(f"Unsupported CONTROL_MODE: {CONTROL_MODE}")
+        if CONTROL_MODE == "skeleton" and (WORKSPACE_CALIBRATION_PATH is not None or WRIST_CALIBRATION_PATH is not None):
+            raise ValueError("skeleton 自动映射不使用人工标定文件，请清空 runtime_path")
 
         self.ik_solver = None
         self.direct_retargeter = None
+        self.skeleton_retargeter = None
         self.raise_template_retargeter = None
         self.direct_baseline_q = None
         self.raise_template_baseline_q = None
         if HAND_ONLY_MODE:
             pass
+        elif CONTROL_MODE == "skeleton":
+            if DIRECT_RETARGET_RUNTIME_ARGS is None:
+                raise RuntimeError("skeleton 模式运行参数尚未初始化")
+            self.skeleton_retargeter = SkeletonRetargeter(
+                direct_retarget_config_from_args(
+                    DIRECT_RETARGET_RUNTIME_ARGS, joint_names=IK_ARM_JOINT_NAMES, motor_ids=ARM_MOTOR_IDS,
+                ),
+                orientation_scale=MOCAP_RELATIVE_ORIENTATION_SCALE,
+            )
         elif CONTROL_MODE == "ik":
             from teleop_ik_types import TeleopIKConfig
 
@@ -233,6 +246,8 @@ class MocapBridgeNode(Node):
                 self.command_joint_limits = list(self.ik_solver.joint_limits)
             elif self.direct_retargeter is not None:
                 self.command_joint_limits = list(self.direct_retargeter.solver.joint_limits)
+            elif self.skeleton_retargeter is not None:
+                self.command_joint_limits = list(self.skeleton_retargeter.solver.joint_limits)
             else:
                 self.command_joint_limits = arm_joint_limits_from_urdf(
                     Path(__file__).resolve().parent / "models" /
@@ -607,10 +622,12 @@ class MocapBridgeNode(Node):
         if not feedback_is_fresh(
             mocap_data.get("receive_monotonic"), time.monotonic(), DROP_STALE_MOCAP_SECONDS
         ):
+            self.reset_skeleton_alignment()
             self.get_logger().warn("动捕数据超时，跳过本帧控制")
             return
 
-        self.process_hand_ik(mocap_data)
+        if CONTROL_MODE != "skeleton" or HAND_ONLY_MODE:
+            self.process_hand_ik(mocap_data)
 
         if HAND_ONLY_MODE:
             return
@@ -626,7 +643,8 @@ class MocapBridgeNode(Node):
             last_arm_state_time is None
             or not feedback_is_fresh(last_arm_state_time, time.monotonic(), ARM_STATE_TIMEOUT_SECONDS)
         )
-        if REQUIRE_ARM_STATE_BEFORE_IK and (current_q is None or arm_state_stale):
+        if (REQUIRE_ARM_STATE_BEFORE_IK or CONTROL_MODE == "skeleton") and (current_q is None or arm_state_stale):
+            self.reset_skeleton_alignment()
             if not self._warned_missing_arm_state:
                 self.get_logger().warn(
                     f"{ARM_STATUS_TOPIC} 状态缺失或超过 {ARM_STATE_TIMEOUT_SECONDS:.2f}s，"
@@ -657,6 +675,13 @@ class MocapBridgeNode(Node):
         mocap_data["current_waist_position"] = current_waist
         mocap_data["current_q_source"] = current_q_source
         self.process_mocap_data(mocap_data)
+        if CONTROL_MODE == "skeleton" and self.startup_pose_locked:
+            try:
+                self.require_skeleton_feedback()
+            except (RuntimeError, ValueError) as exc:
+                self.get_logger().warn(str(exc))
+                return
+            self.process_hand_ik(mocap_data)
 
     def process_hand_ik(self, mocap_data: dict[str, Any]) -> None:
         if self.hand_ik_sidecar is None:
@@ -678,6 +703,8 @@ class MocapBridgeNode(Node):
 
     def publish_hand_result(self, result, mocap_received_at: float | None = None) -> None:
         if self.command_faulted or not HAND_CONTROL_CONFIG.publish_enabled or not ENABLE_ROBOT_COMMAND:
+            return
+        if CONTROL_MODE == "skeleton" and not HAND_ONLY_MODE and not self.startup_pose_locked:
             return
         active_sides = ("left", "right") if CONTROL_SIDE == "both" else (CONTROL_SIDE,)
         for side in active_sides:
@@ -720,6 +747,8 @@ class MocapBridgeNode(Node):
                 now = time.monotonic()
                 require_fresh_feedback(mocap_received_at, now, DROP_STALE_MOCAP_SECONDS, "手部动捕")
                 require_fresh_feedback(feedback_time, now, HAND_CONTROL_CONFIG.state_timeout_s, "手部反馈")
+                if CONTROL_MODE == "skeleton" and not HAND_ONLY_MODE:
+                    self.require_skeleton_feedback()
                 if feedback is None:
                     raise HandControlError("手部反馈失效")
                 for reference in (feedback, last_command):
@@ -759,6 +788,9 @@ class MocapBridgeNode(Node):
 
     def process_mocap_data(self, mocap_data):
         """核心处理管线：direct 走骨架直映射；ik 走末端位姿求解。"""
+        if CONTROL_MODE == "skeleton":
+            self.process_skeleton_data(mocap_data)
+            return
         start_time = time.perf_counter()
 
         try:
@@ -992,6 +1024,85 @@ class MocapBridgeNode(Node):
         chest_homogeneous = np.append(np.asarray(chest.position, dtype=float), 1.0)
         return np.asarray((T_BASE_MOCAP @ chest_homogeneous)[:3], dtype=float)
 
+    def reset_skeleton_alignment(self) -> None:
+        if CONTROL_MODE != "skeleton":
+            return
+        self.startup_pose_locked = False
+        self.startup_pose_gate.reset()
+
+    def require_skeleton_feedback(self) -> None:
+        """The full-session hand path also depends on live, aligned arm feedback."""
+        try:
+            with self.state_lock:
+                q = self.current_lr_arm_motor_q
+                received_at = self.last_arm_state_time
+            require_fresh_feedback(received_at, time.monotonic(), ARM_STATE_TIMEOUT_SECONDS, "骨架手臂反馈")
+            if self.command_faulted or not self.startup_pose_locked or q is None or np.asarray(q).shape != (14,) or not np.all(np.isfinite(q)):
+                raise ValueError("骨架手臂反馈或自动对齐无效")
+        except (RuntimeError, ValueError):
+            self.reset_skeleton_alignment()
+            raise
+
+    def check_realignment_targets(self, baseline_q: np.ndarray) -> None:
+        # A disconnected controller may still retain an old accepted target.
+        # Do not erase that target history to make a displaced robot pass.
+        if self.last_command_q is not None:
+            indices = slice(None) if CONTROL_SIDE == "both" else slice(0, 7) if CONTROL_SIDE == "left" else slice(7, 14)
+            if np.any(np.abs(baseline_q[indices] - self.last_command_q[indices]) > MAX_JOINT_DELTA_PER_STEP + 1e-9):
+                self.command_faulted = True
+                raise RuntimeError("实测姿态已偏离上一已提交目标，控制会话已停发；检查控制器后重新启动")
+        if HAND_CONTROL_CONFIG.publish_enabled:
+            with self.state_lock:
+                snapshots = [(self.hand_feedback[side], self.last_hand_command[side]) for side in
+                             (("left", "right") if CONTROL_SIDE == "both" else (CONTROL_SIDE,))]
+            for measured, submitted in snapshots:
+                if measured is not None and submitted is not None and np.any(
+                    np.abs(np.asarray(measured) - submitted) > HAND_CONTROL_CONFIG.max_step + 1e-9
+                ):
+                    self.command_faulted = True
+                    raise RuntimeError("手部实测姿态已偏离上一已提交目标，检查控制器后重新启动")
+
+    def process_skeleton_data(self, mocap_data: dict[str, Any]) -> None:
+        """用同一个稳定启动窗口建立骨架映射，之后每帧以实测关节求解。"""
+        if self.command_faulted:
+            return
+        try:
+            mapper = self.skeleton_retargeter
+            if mapper is None:
+                raise RuntimeError("skeleton 映射器未初始化")
+            observation, _ = validate_skeleton_frame(mocap_data, mapper.config)
+            if not self.startup_pose_locked:
+                body = observation.body_frame
+                status = self.startup_pose_gate.observe(
+                    now=float(mocap_data["receive_monotonic"]),
+                    frame=mocap_data,
+                    current_q=mocap_data["current_q"],
+                    left_home_position=body.vector_to_local(observation.arms["left"].wrist_world - body.origin),
+                    right_home_position=body.vector_to_local(observation.arms["right"].wrist_world - body.origin),
+                )
+                if not status.ready:
+                    return
+                self.check_realignment_targets(status.robot_baseline_q)
+                mapper.align(status.window_frames, status.robot_baseline_q)
+                self.safe_baseline_q = status.robot_baseline_q.copy()
+                self.startup_pose_locked = True
+                self.get_logger().info("STARTUP_HOME_READY 骨架与机器人静止窗口已自动对齐，未加载人工标定")
+            command = mapper.command_from_frame(
+                mocap_data, current_q=mocap_data["current_q"], last_q_cmd=self.last_command_q,
+                timestamp=mocap_data["timestamp"],
+            )
+        except (KeyError, RuntimeError, ValueError) as exc:
+            self.reset_skeleton_alignment()
+            self.get_logger().warn(f"骨架映射无效，停发并等待重新静止对齐: {exc}")
+            return
+        safe_q = self.apply_safety(command.positions, mocap_data["current_q"])
+        if safe_q is None:
+            return
+        command = replace(command, positions=safe_q)
+        self.publish_to_robot(command, mocap_received_at=mocap_data.get("receive_monotonic"))
+        if self.should_log() and LOG_IK_RESULT:
+            self.log_section("skeleton_mapping_result", {"positions": safe_q, "meta": command.meta})
+
     def ensure_natural_down_startup(
         self,
         mocap_data: dict[str, Any],
@@ -1100,6 +1211,9 @@ class MocapBridgeNode(Node):
 
         skeleton = mocap_data.get("skeleton", {}).get(side, {})
         wrist = skeleton.get("wrist", {})
+        hand = skeleton.get("hand", {})
+        if wrist.get("tracked") is not True or hand.get("tracked") is not True:
+            raise ValueError(f"当前帧 {side} wrist/hand 未跟踪")
         hand_quat = mocap_data.get(f"{side}_hand_quat", mocap_data.get(f"{side}_quat"))
         if wrist.get("pos") is None or hand_quat is None:
             raise ValueError(f"当前帧缺少 {side} wrist/hand 观测")
@@ -1461,14 +1575,14 @@ def parse_runtime_args(args=None):
     parser = argparse.ArgumentParser(description="实时动捕 IK 遥操作节点")
     parser.add_argument("--device-mode", choices=("glove", "controller", "auto"), default=MOCAP_DEVICE_MODE, help="VR 设备协议模式")
     parser.add_argument("--control-side", choices=("left", "right", "both"), default=CONTROL_SIDE, help="控制左臂、右臂或双臂")
-    parser.add_argument("--control-mode", choices=("direct", "ik", "raise_template"), default=CONTROL_MODE, help="direct=骨架直映射；ik=末端位姿 IK；raise_template=立正/侧平举/前平举模板映射")
+    parser.add_argument("--control-mode", choices=("skeleton", "direct", "ik", "raise_template"), default=CONTROL_MODE, help="skeleton=64节点骨架自动映射；其余为高级兼容模式")
     parser.add_argument("--ik-backend", choices=("teleop_dls", "tiangong2pro_official", "ubtech_casadi"), default=IK_SOLVER_BACKEND, help="IK 求解后端；官方天工 2 Pro IK 默认含腰部 15 轴")
     parser.add_argument("--ik-task", choices=("pose", "position_only"), default=IK_TASK_MODE, help="IK 任务类型：pose=官方完整 TCP 位姿 IK；position_only=实验性锁腕位置 IK")
-    parser.add_argument("--position-scale", type=float, default=MOCAP_RELATIVE_POSITION_SCALE, help="有效标定安全边界内的总增益")
+    parser.add_argument("--position-scale", type=float, default=MOCAP_RELATIVE_POSITION_SCALE, help="skeleton 骨段转角增益；旧 ik 模式为位置增益")
     parser.add_argument("--workspace-calibration", type=Path, default=None, help="可选 wrist_roll 工作空间标定；显式指定的文件必须有效")
     parser.add_argument("--wrist-calibration", type=Path, default=None, help="可选人体 hand→wrist 标定；省略时使用 skeleton 腕点，显式文件必须有效")
     parser.add_argument("--hand-only", action="store_true", help="只运行并发布双手 IK；不创建手臂/腰部发布器，也不要求工作空间标定")
-    parser.add_argument("--orientation-scale", type=float, default=MOCAP_RELATIVE_ORIENTATION_SCALE, help="pose 模式的世界系相对手腕旋转增益；默认 0.25 优先保证 TCP 位置")
+    parser.add_argument("--orientation-scale", type=float, default=MOCAP_RELATIVE_ORIENTATION_SCALE, help="skeleton 身体局部手姿态增益，默认 1")
     parser.add_argument("--safe-teleop", choices=("true", "false"), default="true" if SAFE_TELEOP_MODE else "false", help="是否启用低速安全遥操作门控")
     parser.add_argument("--safe-rate", type=float, default=SAFE_COMMAND_RATE_HZ, help="安全模式下最大命令发布频率")
     parser.add_argument("--max-joint-delta-per-step", type=float, default=MAX_JOINT_DELTA_PER_STEP, help="单次下发最大关节变化，单位 rad")
@@ -1505,6 +1619,10 @@ def apply_runtime_args(parsed) -> None:
     WORKSPACE_CALIBRATION_PATH = parsed.workspace_calibration
     WRIST_CALIBRATION_PATH = parsed.wrist_calibration
     HAND_ONLY_MODE = bool(parsed.hand_only)
+    if CONTROL_MODE == "skeleton" and (WORKSPACE_CALIBRATION_PATH is not None or WRIST_CALIBRATION_PATH is not None):
+        raise ValueError("skeleton 自动映射不接受人工标定路径；请清空 runtime_path")
+    if CONTROL_MODE == "skeleton" and (IK_SOLVER_BACKEND != "teleop_dls" or IK_TASK_MODE != "pose"):
+        raise ValueError("skeleton 自动映射使用 teleop_dls 的骨段与手部姿态任务")
     SAFE_TELEOP_MODE = parsed.safe_teleop == "true"
     SAFE_COMMAND_RATE_HZ = float(parsed.safe_rate)
     MAX_JOINT_DELTA_PER_STEP = float(parsed.max_joint_delta_per_step)

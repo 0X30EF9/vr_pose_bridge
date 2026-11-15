@@ -137,6 +137,48 @@ class NaturalDownStartupTest(unittest.TestCase):
         self.assertTrue(ready.ready)
         self.assertEqual(ready.reasons, ())
 
+    def test_window_returns_same_frames_and_robust_robot_baseline(self) -> None:
+        gate = NaturalDownStartupGate(NaturalDownStartupConfig(hold_seconds=0.2))
+        frames = [make_frame().to_replay_dict() for _ in range(3)]
+        for index, frame in enumerate(frames):
+            status = gate.observe(index * 0.1, frame, np.full(14, index * 0.002),
+                                  np.zeros(3), np.zeros(3))
+        self.assertTrue(status.ready)
+        self.assertEqual(len(status.window_frames), 3)
+        np.testing.assert_allclose(status.robot_baseline_q, 0.002)
+
+    def test_robot_motion_resets_the_startup_window(self) -> None:
+        gate = NaturalDownStartupGate(NaturalDownStartupConfig(hold_seconds=0.2))
+        gate.observe(0.0, make_frame(), np.zeros(14), np.zeros(3), np.zeros(3))
+        status = gate.observe(0.1, make_frame(), np.full(14, 0.1), np.zeros(3), np.zeros(3))
+        self.assertFalse(status.ready)
+        self.assertEqual(status.reasons, ("robot_arm_pose_unstable",))
+        self.assertEqual(len(gate.frame_samples), 1)
+
+    def test_duplicate_and_nonfinite_times_cannot_complete_alignment(self) -> None:
+        gate = NaturalDownStartupGate(NaturalDownStartupConfig(hold_seconds=0))
+        for _ in range(4):
+            status = gate.observe(1.0, make_frame(), np.zeros(14), np.zeros(3), np.zeros(3))
+        self.assertFalse(status.ready)
+        self.assertEqual(len(gate.frame_samples), 1)
+        status = gate.observe(float("nan"), make_frame(), np.zeros(14), np.zeros(3), np.zeros(3))
+        self.assertFalse(status.ready)
+        self.assertFalse(gate.frame_samples)
+
+    def test_untracked_hand_invalidates_a_good_startup_window(self) -> None:
+        gate = NaturalDownStartupGate(self.config)
+        frame = make_frame().to_replay_dict()
+        gate.observe(0.0, frame, np.zeros(14), np.zeros(3), np.zeros(3))
+        frame["skeleton"]["left"]["hand"]["tracked"] = False
+        status = gate.observe(1.0, frame, np.zeros(14), np.zeros(3), np.zeros(3))
+        self.assertFalse(status.ready)
+        self.assertFalse(gate.frame_samples)
+
+    def test_configuration_rejects_nonfinite_time_and_limits(self) -> None:
+        for field in ("hold_seconds", "max_robot_joint_span_rad", "max_home_rms_m"):
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                NaturalDownStartupConfig(**{field: float("nan")})
+
 
 if __name__ == "__main__":
     unittest.main()

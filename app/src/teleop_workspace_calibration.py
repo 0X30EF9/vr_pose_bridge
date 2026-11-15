@@ -66,7 +66,7 @@ def load_json(path: Path) -> dict[str, Any]:
 
 
 def print_guide() -> None:
-    guide = ROOT_DIR / "WORKSPACE_CALIBRATION.md"
+    guide = ROOT_DIR.parent / "docs" / "legacy-calibration.md"
     if not guide.is_file():
         raise FileNotFoundError(f"找不到标定说明: {guide}")
     print(guide.read_text(encoding="utf-8"))
@@ -519,7 +519,7 @@ def analyze_capture(args: argparse.Namespace) -> Path:
     print(f"ANALYZE_RESULT {'OK' if valid else 'FAIL'}")
     print(f"ANALYSIS_OUTPUT {output}")
     if not valid:
-        print("ANALYZE_RETRY 请按 WORKSPACE_CALIBRATION.md 重做失败方向")
+        print("ANALYZE_RETRY 请按 docs/legacy-calibration.md 重做失败方向")
         return output
     return output
 
