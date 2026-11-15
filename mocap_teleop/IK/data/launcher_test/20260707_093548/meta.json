@@ -1,0 +1,14 @@
+{
+  "duration_seconds": 1.0,
+  "end_time": 1783388149.9915683,
+  "expected_packet_size": 1366,
+  "invalid_packets": 0,
+  "last_error": null,
+  "received_packets": 1,
+  "save_jsonl": true,
+  "save_raw": true,
+  "start_time": 1783388148.8158052,
+  "udp_ip": "127.0.0.1",
+  "udp_port": 15002,
+  "valid_packets": 1
+}

@@ -1,0 +1,17 @@
+packageName: robot.test.org
+version: 0.1.0
+kind: AtomAbility
+metadata:
+  name: IKAbility
+
+spec:
+  schema:
+    openAPIV3Schema:
+      type: object
+      properties:
+        config:
+          type: object
+          properties:
+            robotUri:
+              type: string
+          required: [robotUri]

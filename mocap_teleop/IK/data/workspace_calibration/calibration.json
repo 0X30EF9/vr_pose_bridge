@@ -1,0 +1,518 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-07-23T06:35:59.931787+00:00",
+  "source_capture": "/home/lenovo/dzy/ik_update/mocap_teleop/IK/data/workspace_calibration/raw/session_20260722_161945_611683/capture.json",
+  "position_reference": "hand_minus_chest",
+  "valid": true,
+  "base_from_mocap_rotation": [
+    [
+      0.9870523688432477,
+      -0.004005227754757508,
+      0.16034830623229537
+    ],
+    [
+      -0.02400601570404085,
+      0.984739639423021,
+      0.1723703969915832
+    ],
+    [
+      -0.15859171595941196,
+      -0.17398793262652204,
+      0.9718934442259595
+    ]
+  ],
+  "mocap_home": {
+    "left": [
+      0.16729640774428844,
+      0.19496498280204833,
+      -0.03472393751144409
+    ],
+    "right": [
+      0.22928841225802898,
+      -0.09787982702255249,
+      -0.007213890552520752
+    ]
+  },
+  "displacements": {
+    "left": {
+      "forward": [
+        0.18992970325052738,
+        0.022764835273846984,
+        0.03188979625701904
+      ],
+      "backward": [
+        -0.0974582489579916,
+        -0.032250752905383706,
+        0.05622798204421997
+      ],
+      "outward": [
+        -0.10269745253026485,
+        0.10512502468191087,
+        0.04231137037277222
+      ],
+      "inward": [
+        -0.040679095312952995,
+        -0.13243675255216658,
+        0.01703852415084839
+      ],
+      "up": [
+        -0.01967477612197399,
+        0.04231800860725343,
+        0.16714638471603394
+      ],
+      "down": [
+        -0.023896535858511925,
+        0.013417474692687392,
+        -0.20374590158462524
+      ]
+    },
+    "right": {
+      "forward": [
+        0.21804952807724476,
+        -0.02788470685482025,
+        0.034234702587127686
+      ],
+      "backward": [
+        -0.13874314166605473,
+        -0.00679442286491394,
+        0.029619038105010986
+      ],
+      "outward": [
+        -0.026411653496325016,
+        -0.20371035486459732,
+        0.013399779796600342
+      ],
+      "inward": [
+        -0.06686857249587774,
+        0.08889232575893402,
+        -0.041308581829071045
+      ],
+      "up": [
+        0.018972842022776604,
+        -0.0881347507238388,
+        0.15298086404800415
+      ],
+      "down": [
+        -0.017825430259108543,
+        -0.07508337497711182,
+        -0.1801033616065979
+      ]
+    }
+  },
+  "retry_summary": {
+    "left_inward": {
+      "retry_count": 3,
+      "failed_frames": 1370,
+      "reasons": [
+        "left_displacement=0.0719<0.0800m",
+        "left_displacement=0.0578<0.0800m",
+        "left_displacement=0.0488<0.0800m"
+      ]
+    },
+    "left_up": {
+      "retry_count": 1,
+      "failed_frames": 458,
+      "reasons": [
+        "left_jitter=0.0844>0.0550m"
+      ]
+    }
+  },
+  "quality": {
+    "left_home_jitter": 0.004345619426535796,
+    "left_home_samples": 180,
+    "left_home_valid_rate": 1.0,
+    "right_home_jitter": 0.003758395663139577,
+    "right_home_samples": 180,
+    "right_home_valid_rate": 1.0,
+    "left_forward_jitter": 0.0061625153548346395,
+    "left_forward_samples": 228,
+    "left_forward_valid_rate": 1.0,
+    "left_forward_displacement": 0.19392908241724077,
+    "left_backward_jitter": 0.024334008409524703,
+    "left_backward_samples": 229,
+    "left_backward_valid_rate": 1.0,
+    "left_backward_displacement": 0.11704617600625451,
+    "left_outward_jitter": 0.008604924241298334,
+    "left_outward_samples": 229,
+    "left_outward_valid_rate": 1.0,
+    "left_outward_displacement": 0.15293230408713615,
+    "left_inward_jitter": 0.021244153182266846,
+    "left_inward_samples": 229,
+    "left_inward_valid_rate": 1.0,
+    "left_inward_displacement": 0.13958722551610214,
+    "left_up_jitter": 0.007788026512798935,
+    "left_up_samples": 229,
+    "left_up_valid_rate": 1.0,
+    "left_up_displacement": 0.17353911545116793,
+    "left_down_jitter": 0.007263327551429961,
+    "left_down_samples": 229,
+    "left_down_valid_rate": 1.0,
+    "left_down_displacement": 0.20558080033334303,
+    "right_forward_jitter": 0.005000634809085538,
+    "right_forward_samples": 229,
+    "right_forward_valid_rate": 1.0,
+    "right_forward_displacement": 0.22247509620700806,
+    "right_backward_jitter": 0.04089498691158152,
+    "right_backward_samples": 229,
+    "right_backward_valid_rate": 1.0,
+    "right_backward_displacement": 0.1420320772209584,
+    "right_outward_jitter": 0.005703666803961961,
+    "right_outward_samples": 228,
+    "right_outward_valid_rate": 1.0,
+    "right_outward_displacement": 0.20585198133141075,
+    "right_inward_jitter": 0.005518224627031184,
+    "right_inward_samples": 228,
+    "right_inward_valid_rate": 1.0,
+    "right_inward_displacement": 0.11865770307568725,
+    "right_up_jitter": 0.008300499305621642,
+    "right_up_samples": 229,
+    "right_up_valid_rate": 1.0,
+    "right_up_displacement": 0.17756927601487923,
+    "right_down_jitter": 0.006954131534826291,
+    "right_down_samples": 229,
+    "right_down_valid_rate": 1.0,
+    "right_down_displacement": 0.19593999087443298,
+    "up_alignment": 0.9091846711236852,
+    "left_forward_direction_cosine": 0.9925940842581418,
+    "left_backward_direction_cosine": 0.7437335005147868,
+    "left_outward_direction_cosine": 0.7407157300244243,
+    "left_inward_direction_cosine": 0.9062594325083301,
+    "left_up_direction_cosine": 0.9116440912824328,
+    "left_down_direction_cosine": 0.9561398329748915,
+    "right_forward_direction_cosine": 0.9925940842581418,
+    "right_backward_direction_cosine": 0.9305656399942168,
+    "right_outward_direction_cosine": 0.9601942919662174,
+    "right_inward_direction_cosine": 0.69123761914905,
+    "right_up_direction_cosine": 0.9067252509649373,
+    "right_down_direction_cosine": 0.81224210003717,
+    "left_forward_backward_cosine": -0.7688252258824775,
+    "left_outward_inward_cosine": -0.4227145131354056,
+    "left_up_down_cosine": -0.925472136061776,
+    "right_forward_backward_cosine": -0.9193260800577517,
+    "right_outward_inward_cosine": -0.6917119719982822,
+    "right_up_down_cosine": -0.6114206853586922,
+    "rotation_determinant": 1.0000000000000002
+  },
+  "quality_thresholds": {
+    "min_direction_displacement_m": 0.08,
+    "max_direction_rms_m": 0.055,
+    "min_valid_rate": 0.9,
+    "min_direction_cosine": 0.68,
+    "max_opposite_direction_cosine": -0.4
+  },
+  "source_analysis": "/home/lenovo/dzy/ik_update/mocap_teleop/IK/data/workspace_calibration/analysis_20260723_143513.json",
+  "control_frame": "L_ee_R_ee",
+  "urdf_path": "/home/lenovo/dzy/ik_update/tiangong2pro_ik_v0.2 2/tiangong2pro_ik_v0.2/tiangong2pro_ik/tienkung2_pro/urdf/tiangong2.0_pro.urdf",
+  "solver_path": "/home/lenovo/dzy/ik_update/tiangong2pro_ik_v0.2 2/tiangong2pro_ik_v0.2/tiangong2pro_ik/.casadi_cache/ik_solver.so",
+  "solver_mode": "external_so",
+  "robot_home_q": [
+    0.0,
+    0.35,
+    0.0,
+    -0.7,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    -0.35,
+    0.0,
+    -0.7,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "workspace_bounds": {
+    "left": {
+      "forward": {
+        "math_boundary_m": 0.14,
+        "safe_boundary_m": 0.09100000000000001,
+        "position_error_m": 0.012768221628039362,
+        "orientation_error_rad": 0.001746788663234991,
+        "minimum_joint_margin_rad": 0.47455329341741015,
+        "waist_margin_rad": 2.6741329964794454,
+        "joint_margin_ok": true,
+        "solver_return_status": "max_outer_iterations",
+        "failure": {
+          "distance_m": 0.15000000000000002,
+          "position_error_m": 0.015877657053782024,
+          "orientation_error_rad": 0.001983119769713849,
+          "minimum_joint_margin_rad": 0.4629200590235103,
+          "waist_margin_rad": 2.655927508370579,
+          "joint_margin_ok": true,
+          "solver_reason": "ok",
+          "solver_return_status": "max_outer_iterations",
+          "solver_position_error_m": 0.015877657053782024,
+          "solver_orientation_error_rad": 0.001983119769713937,
+          "solver_exception": null,
+          "iteration_count": 1,
+          "failed_checks": [
+            "position_error"
+          ]
+        }
+      },
+      "backward": {
+        "math_boundary_m": 0.49,
+        "safe_boundary_m": 0.3185,
+        "position_error_m": 0.01228073736075609,
+        "orientation_error_rad": 0.007603572532446886,
+        "minimum_joint_margin_rad": 0.36157074998047145,
+        "waist_margin_rad": 2.551976819513717,
+        "joint_margin_ok": true,
+        "solver_return_status": "max_outer_iterations",
+        "failure": {
+          "distance_m": 0.5,
+          "position_error_m": 0.015538904207368103,
+          "orientation_error_rad": 0.008820405727506262,
+          "minimum_joint_margin_rad": 0.346327815861864,
+          "waist_margin_rad": 2.5255415461349178,
+          "joint_margin_ok": true,
+          "solver_reason": "ok",
+          "solver_return_status": "max_outer_iterations",
+          "solver_position_error_m": 0.015538904207368103,
+          "solver_orientation_error_rad": 0.008820405727506213,
+          "solver_exception": null,
+          "iteration_count": 1,
+          "failed_checks": [
+            "position_error"
+          ]
+        }
+      },
+      "outward": {
+        "math_boundary_m": 0.09,
+        "safe_boundary_m": 0.058499999999999996,
+        "position_error_m": 0.013775352597059191,
+        "orientation_error_rad": 0.0038217611747761475,
+        "minimum_joint_margin_rad": 0.4717814218622525,
+        "waist_margin_rad": 2.770529243815767,
+        "joint_margin_ok": true,
+        "solver_return_status": "max_outer_iterations",
+        "failure": {
+          "distance_m": 0.09999999999999999,
+          "position_error_m": 0.01886817880144532,
+          "orientation_error_rad": 0.00481793312522852,
+          "minimum_joint_margin_rad": 0.4562962619945308,
+          "waist_margin_rad": 2.757306523536472,
+          "joint_margin_ok": true,
+          "solver_reason": "ok",
+          "solver_return_status": "max_outer_iterations",
+          "solver_position_error_m": 0.01886817880144532,
+          "solver_orientation_error_rad": 0.004817933125228386,
+          "solver_exception": null,
+          "iteration_count": 1,
+          "failed_checks": [
+            "position_error"
+          ]
+        }
+      },
+      "inward": {
+        "math_boundary_m": 0.5,
+        "safe_boundary_m": 0.325,
+        "position_error_m": 0.0051126943143791365,
+        "orientation_error_rad": 0.015061405801296689,
+        "minimum_joint_margin_rad": 0.00012228255789603626,
+        "waist_margin_rad": 2.789131525569365,
+        "joint_margin_ok": true,
+        "solver_return_status": "max_outer_iterations",
+        "failure": null
+      },
+      "up": {
+        "math_boundary_m": 0.5,
+        "safe_boundary_m": 0.325,
+        "position_error_m": 0.002212344472601584,
+        "orientation_error_rad": 0.006403042899806228,
+        "minimum_joint_margin_rad": 0.003680819454676243,
+        "waist_margin_rad": 2.8543050112175266,
+        "joint_margin_ok": true,
+        "solver_return_status": "max_outer_iterations",
+        "failure": null
+      },
+      "down": {
+        "math_boundary_m": 0.05,
+        "safe_boundary_m": 0.0325,
+        "position_error_m": 0.01419252527052806,
+        "orientation_error_rad": 0.003958891499553972,
+        "minimum_joint_margin_rad": 0.4710390967468153,
+        "waist_margin_rad": 2.749730922420085,
+        "joint_margin_ok": true,
+        "solver_return_status": "max_outer_iterations",
+        "failure": {
+          "distance_m": 0.060000000000000005,
+          "position_error_m": 0.02248799823183141,
+          "orientation_error_rad": 0.005668548749259029,
+          "minimum_joint_margin_rad": 0.45005991563567277,
+          "waist_margin_rad": 2.725786248417009,
+          "joint_margin_ok": true,
+          "solver_reason": "ok",
+          "solver_return_status": "max_outer_iterations",
+          "solver_position_error_m": 0.02248799823183141,
+          "solver_orientation_error_rad": 0.00566854874925901,
+          "solver_exception": null,
+          "iteration_count": 1,
+          "failed_checks": [
+            "position_error"
+          ]
+        }
+      }
+    },
+    "right": {
+      "forward": {
+        "math_boundary_m": 0.14,
+        "safe_boundary_m": 0.09100000000000001,
+        "position_error_m": 0.012768210896868243,
+        "orientation_error_rad": 0.001746787919286057,
+        "minimum_joint_margin_rad": 0.4745533379353698,
+        "waist_margin_rad": 2.8486657462311173,
+        "joint_margin_ok": true,
+        "solver_return_status": "max_outer_iterations",
+        "failure": {
+          "distance_m": 0.15000000000000002,
+          "position_error_m": 0.01587764720956112,
+          "orientation_error_rad": 0.0019831193921577093,
+          "minimum_joint_margin_rad": 0.4629200837264533,
+          "waist_margin_rad": 2.8304602749215166,
+          "joint_margin_ok": true,
+          "solver_reason": "ok",
+          "solver_return_status": "max_outer_iterations",
+          "solver_position_error_m": 0.01587764720956112,
+          "solver_orientation_error_rad": 0.0019831193921576616,
+          "solver_exception": null,
+          "iteration_count": 1,
+          "failed_checks": [
+            "position_error"
+          ]
+        }
+      },
+      "backward": {
+        "math_boundary_m": 0.49,
+        "safe_boundary_m": 0.3185,
+        "position_error_m": 0.012280750555491845,
+        "orientation_error_rad": 0.007603577278275608,
+        "minimum_joint_margin_rad": 0.36157032854997273,
+        "waist_margin_rad": 2.3774449045792285,
+        "joint_margin_ok": true,
+        "solver_return_status": "max_outer_iterations",
+        "failure": {
+          "distance_m": 0.5,
+          "position_error_m": 0.015538913034204136,
+          "orientation_error_rad": 0.008820411971778002,
+          "minimum_joint_margin_rad": 0.346327443565536,
+          "waist_margin_rad": 2.351009472694752,
+          "joint_margin_ok": true,
+          "solver_reason": "ok",
+          "solver_return_status": "max_outer_iterations",
+          "solver_position_error_m": 0.015538913034204136,
+          "solver_orientation_error_rad": 0.008820411971778068,
+          "solver_exception": null,
+          "iteration_count": 1,
+          "failed_checks": [
+            "position_error"
+          ]
+        }
+      },
+      "outward": {
+        "math_boundary_m": 0.09,
+        "safe_boundary_m": 0.058499999999999996,
+        "position_error_m": 0.013775330903713757,
+        "orientation_error_rad": 0.003821723444860678,
+        "minimum_joint_margin_rad": 0.47177895668522873,
+        "waist_margin_rad": 2.9450620990336183,
+        "joint_margin_ok": true,
+        "solver_return_status": "max_outer_iterations",
+        "failure": {
+          "distance_m": 0.09999999999999999,
+          "position_error_m": 0.018867913344488688,
+          "orientation_error_rad": 0.004817987333093078,
+          "minimum_joint_margin_rad": 0.4562909871141442,
+          "waist_margin_rad": 2.931827056231268,
+          "joint_margin_ok": true,
+          "solver_reason": "ok",
+          "solver_return_status": "max_outer_iterations",
+          "solver_position_error_m": 0.018867913344488688,
+          "solver_orientation_error_rad": 0.004817987333093122,
+          "solver_exception": null,
+          "iteration_count": 1,
+          "failed_checks": [
+            "position_error"
+          ]
+        }
+      },
+      "inward": {
+        "math_boundary_m": 0.5,
+        "safe_boundary_m": 0.325,
+        "position_error_m": 0.005112674227998897,
+        "orientation_error_rad": 0.015061384887504687,
+        "minimum_joint_margin_rad": 0.00012228285995197208,
+        "waist_margin_rad": 2.963663622843933,
+        "joint_margin_ok": true,
+        "solver_return_status": "max_outer_iterations",
+        "failure": null
+      },
+      "up": {
+        "math_boundary_m": 0.5,
+        "safe_boundary_m": 0.325,
+        "position_error_m": 0.002212365455104074,
+        "orientation_error_rad": 0.006403117091316081,
+        "minimum_joint_margin_rad": 0.0036802170155845193,
+        "waist_margin_rad": 2.6797741417129077,
+        "joint_margin_ok": true,
+        "solver_return_status": "max_outer_iterations",
+        "failure": null
+      },
+      "down": {
+        "math_boundary_m": 0.05,
+        "safe_boundary_m": 0.0325,
+        "position_error_m": 0.01419244251630687,
+        "orientation_error_rad": 0.003958878581995724,
+        "minimum_joint_margin_rad": 0.47103945406656694,
+        "waist_margin_rad": 2.924260427046167,
+        "joint_margin_ok": true,
+        "solver_return_status": "max_outer_iterations",
+        "failure": {
+          "distance_m": 0.060000000000000005,
+          "position_error_m": 0.02248799921294368,
+          "orientation_error_rad": 0.0056685484616132865,
+          "minimum_joint_margin_rad": 0.4500599206437145,
+          "waist_margin_rad": 2.9003192196325642,
+          "joint_margin_ok": true,
+          "solver_reason": "ok",
+          "solver_return_status": "max_outer_iterations",
+          "solver_position_error_m": 0.02248799921294368,
+          "solver_orientation_error_rad": 0.005668548461613151,
+          "solver_exception": null,
+          "iteration_count": 1,
+          "failed_checks": [
+            "position_error"
+          ]
+        }
+      }
+    }
+  },
+  "direction_scales": {
+    "left": {
+      "forward": 0.4692436991178683,
+      "backward": 2.721148275557337,
+      "outward": 0.38252219077709365,
+      "inward": 2.328293286139637,
+      "up": 1.8727766311074208,
+      "down": 0.15808869285119154
+    },
+    "right": {
+      "forward": 0.4090345461198343,
+      "backward": 2.2424511859001512,
+      "outward": 0.2841847798677153,
+      "inward": 2.7389709355211,
+      "up": 1.8302715835411019,
+      "down": 0.16586710989910905
+    }
+  },
+  "safe_boundary_ratio": 0.65,
+  "scan": {
+    "step_m": 0.01,
+    "max_m": 0.5,
+    "position_error_threshold": 0.015,
+    "orientation_error_threshold": 0.2,
+    "joint_limit_policy": "official_urdf_bounds",
+    "joint_margin_rad": 0.0,
+    "additional_joint_margin_rad": 0.0
+  }
+}

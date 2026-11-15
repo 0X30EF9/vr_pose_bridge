@@ -1,0 +1,203 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-07-23T06:35:13.827960+00:00",
+  "source_capture": "/home/lenovo/dzy/ik_update/mocap_teleop/IK/data/workspace_calibration/raw/session_20260722_161945_611683/capture.json",
+  "position_reference": "hand_minus_chest",
+  "valid": true,
+  "base_from_mocap_rotation": [
+    [
+      0.9870523688432477,
+      -0.004005227754757508,
+      0.16034830623229537
+    ],
+    [
+      -0.02400601570404085,
+      0.984739639423021,
+      0.1723703969915832
+    ],
+    [
+      -0.15859171595941196,
+      -0.17398793262652204,
+      0.9718934442259595
+    ]
+  ],
+  "mocap_home": {
+    "left": [
+      0.16729640774428844,
+      0.19496498280204833,
+      -0.03472393751144409
+    ],
+    "right": [
+      0.22928841225802898,
+      -0.09787982702255249,
+      -0.007213890552520752
+    ]
+  },
+  "displacements": {
+    "left": {
+      "forward": [
+        0.18992970325052738,
+        0.022764835273846984,
+        0.03188979625701904
+      ],
+      "backward": [
+        -0.0974582489579916,
+        -0.032250752905383706,
+        0.05622798204421997
+      ],
+      "outward": [
+        -0.10269745253026485,
+        0.10512502468191087,
+        0.04231137037277222
+      ],
+      "inward": [
+        -0.040679095312952995,
+        -0.13243675255216658,
+        0.01703852415084839
+      ],
+      "up": [
+        -0.01967477612197399,
+        0.04231800860725343,
+        0.16714638471603394
+      ],
+      "down": [
+        -0.023896535858511925,
+        0.013417474692687392,
+        -0.20374590158462524
+      ]
+    },
+    "right": {
+      "forward": [
+        0.21804952807724476,
+        -0.02788470685482025,
+        0.034234702587127686
+      ],
+      "backward": [
+        -0.13874314166605473,
+        -0.00679442286491394,
+        0.029619038105010986
+      ],
+      "outward": [
+        -0.026411653496325016,
+        -0.20371035486459732,
+        0.013399779796600342
+      ],
+      "inward": [
+        -0.06686857249587774,
+        0.08889232575893402,
+        -0.041308581829071045
+      ],
+      "up": [
+        0.018972842022776604,
+        -0.0881347507238388,
+        0.15298086404800415
+      ],
+      "down": [
+        -0.017825430259108543,
+        -0.07508337497711182,
+        -0.1801033616065979
+      ]
+    }
+  },
+  "retry_summary": {
+    "left_inward": {
+      "retry_count": 3,
+      "failed_frames": 1370,
+      "reasons": [
+        "left_displacement=0.0719<0.0800m",
+        "left_displacement=0.0578<0.0800m",
+        "left_displacement=0.0488<0.0800m"
+      ]
+    },
+    "left_up": {
+      "retry_count": 1,
+      "failed_frames": 458,
+      "reasons": [
+        "left_jitter=0.0844>0.0550m"
+      ]
+    }
+  },
+  "quality": {
+    "left_home_jitter": 0.004345619426535796,
+    "left_home_samples": 180,
+    "left_home_valid_rate": 1.0,
+    "right_home_jitter": 0.003758395663139577,
+    "right_home_samples": 180,
+    "right_home_valid_rate": 1.0,
+    "left_forward_jitter": 0.0061625153548346395,
+    "left_forward_samples": 228,
+    "left_forward_valid_rate": 1.0,
+    "left_forward_displacement": 0.19392908241724077,
+    "left_backward_jitter": 0.024334008409524703,
+    "left_backward_samples": 229,
+    "left_backward_valid_rate": 1.0,
+    "left_backward_displacement": 0.11704617600625451,
+    "left_outward_jitter": 0.008604924241298334,
+    "left_outward_samples": 229,
+    "left_outward_valid_rate": 1.0,
+    "left_outward_displacement": 0.15293230408713615,
+    "left_inward_jitter": 0.021244153182266846,
+    "left_inward_samples": 229,
+    "left_inward_valid_rate": 1.0,
+    "left_inward_displacement": 0.13958722551610214,
+    "left_up_jitter": 0.007788026512798935,
+    "left_up_samples": 229,
+    "left_up_valid_rate": 1.0,
+    "left_up_displacement": 0.17353911545116793,
+    "left_down_jitter": 0.007263327551429961,
+    "left_down_samples": 229,
+    "left_down_valid_rate": 1.0,
+    "left_down_displacement": 0.20558080033334303,
+    "right_forward_jitter": 0.005000634809085538,
+    "right_forward_samples": 229,
+    "right_forward_valid_rate": 1.0,
+    "right_forward_displacement": 0.22247509620700806,
+    "right_backward_jitter": 0.04089498691158152,
+    "right_backward_samples": 229,
+    "right_backward_valid_rate": 1.0,
+    "right_backward_displacement": 0.1420320772209584,
+    "right_outward_jitter": 0.005703666803961961,
+    "right_outward_samples": 228,
+    "right_outward_valid_rate": 1.0,
+    "right_outward_displacement": 0.20585198133141075,
+    "right_inward_jitter": 0.005518224627031184,
+    "right_inward_samples": 228,
+    "right_inward_valid_rate": 1.0,
+    "right_inward_displacement": 0.11865770307568725,
+    "right_up_jitter": 0.008300499305621642,
+    "right_up_samples": 229,
+    "right_up_valid_rate": 1.0,
+    "right_up_displacement": 0.17756927601487923,
+    "right_down_jitter": 0.006954131534826291,
+    "right_down_samples": 229,
+    "right_down_valid_rate": 1.0,
+    "right_down_displacement": 0.19593999087443298,
+    "up_alignment": 0.9091846711236852,
+    "left_forward_direction_cosine": 0.9925940842581418,
+    "left_backward_direction_cosine": 0.7437335005147868,
+    "left_outward_direction_cosine": 0.7407157300244243,
+    "left_inward_direction_cosine": 0.9062594325083301,
+    "left_up_direction_cosine": 0.9116440912824328,
+    "left_down_direction_cosine": 0.9561398329748915,
+    "right_forward_direction_cosine": 0.9925940842581418,
+    "right_backward_direction_cosine": 0.9305656399942168,
+    "right_outward_direction_cosine": 0.9601942919662174,
+    "right_inward_direction_cosine": 0.69123761914905,
+    "right_up_direction_cosine": 0.9067252509649373,
+    "right_down_direction_cosine": 0.81224210003717,
+    "left_forward_backward_cosine": -0.7688252258824775,
+    "left_outward_inward_cosine": -0.4227145131354056,
+    "left_up_down_cosine": -0.925472136061776,
+    "right_forward_backward_cosine": -0.9193260800577517,
+    "right_outward_inward_cosine": -0.6917119719982822,
+    "right_up_down_cosine": -0.6114206853586922,
+    "rotation_determinant": 1.0000000000000002
+  },
+  "quality_thresholds": {
+    "min_direction_displacement_m": 0.08,
+    "max_direction_rms_m": 0.055,
+    "min_valid_rate": 0.9,
+    "min_direction_cosine": 0.68,
+    "max_opposite_direction_cosine": -0.4
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "format": "csv",
+  "csv_path": "/home/lenovo/dzy/mocap_teleop/IK/data/launcher_test/self_test/vr_20260710_132510.csv",
+  "udp_ip": "127.0.0.1",
+  "udp_port": 15002,
+  "expected_packet_size": 1366,
+  "start_time": 1783661110.0334752,
+  "end_time": 1783661114.2283306,
+  "duration_limit": 4.0,
+  "received_packets": 30,
+  "valid_packets": 30,
+  "invalid_packets": 0,
+  "raw_saved": true
+}

@@ -1,0 +1,20 @@
+{
+  "sdk_mode": "dual_hand_direct_api",
+  "left_hand": {
+    "sdk_config": "mocap_ik_revo2_left_hand_sdk.json"
+  },
+  "right_hand": {
+    "sdk_config": "mocap_ik_revo2_right_hand_sdk.json"
+  },
+  "output_record": {
+    "enabled": true,
+    "directory": "../../log/python_sdk_output",
+    "csv_filename": "joint_positions_rad.csv",
+    "jsonl_filename": "joint_positions_rad.jsonl"
+  },
+  "diagnostic_record": {
+    "enabled": true,
+    "directory": "../../log/python_sdk_output",
+    "csv_filename": "ik_diagnostic_rad.csv"
+  }
+}

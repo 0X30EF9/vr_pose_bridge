@@ -1,0 +1,14 @@
+{
+  "udp_ip": "127.0.0.1",
+  "udp_port": 15002,
+  "expected_packet_size": 1366,
+  "start_time": 1783414772.7047188,
+  "end_time": 1783414773.705811,
+  "duration_limit": 1.0,
+  "session_dir": "/home/lenovo/dzy/mocap_teleop/IK/data/launcher_test/20260707_165932",
+  "received_packets": 0,
+  "valid_packets": 0,
+  "invalid_packets": 0,
+  "raw_saved": true,
+  "jsonl_saved": true
+}

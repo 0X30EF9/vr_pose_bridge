@@ -1,0 +1,10 @@
+[project]
+name = "ability_sdk"
+version = "0.1.0"
+description = "能力程序的Python SDK"
+readme = "README.md"
+requires-python = ">=3.7"
+dependencies = [
+    "flask>=3.1.1",
+    "requests>=2.32.4"
+]

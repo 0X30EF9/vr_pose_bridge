@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-07-24T08:54:07.792608+00:00",
+  "source_capture": "/home/lenovo/dzy/ik_update/mocap_teleop/IK/data/wrist_calibration/raw/raw/session_20260724_164244_923702/capture.json",
+  "valid": true,
+  "control_point": "anatomical_wrist",
+  "sides": {
+    "left": {
+      "position_source": "wrist_joint",
+      "orientation_source": "hand_joint",
+      "hand_to_wrist_offset": [0.0, 0.0, 0.0],
+      "group_centers": {
+        "front": [0.06373540217767547, 0.17594370607829002, 0.030148033410679374],
+        "side": [-0.015290388755543054, 0.25534972820936724, 0.0680340619661612],
+        "raised": [0.012017425203461047, 0.3019340713261927, 0.21930037655431106]
+      },
+      "quality": {
+        "sample_count": 3136,
+        "group_count": 3,
+        "position_observation": "explicit_wrist_joint",
+        "hand_wrist_shared_origin": true,
+        "hand_wrist_origin_rms_m": 0.0,
+        "hand_wrist_origin_p95_m": 0.0,
+        "outlier_fraction": 0.0,
+        "rotation_excitation_rad": 2.079938746246463,
+        "rotation_rank": 3,
+        "rotation_singular_values": [52.39281126805973, 30.31242017339426, 13.424258565801713]
+      },
+      "valid": true,
+      "reasons": []
+    },
+    "right": {
+      "position_source": "wrist_joint",
+      "orientation_source": "hand_joint",
+      "hand_to_wrist_offset": [0.0, 0.0, 0.0],
+      "group_centers": {
+        "front": [0.12681429211582457, -0.0872178725827308, 0.0067265893731798445],
+        "side": [0.13006736859891893, -0.2197921939981086, 0.04459697898516306],
+        "raised": [0.14464872161960873, -0.28931715636881544, 0.18691035149338794]
+      },
+      "quality": {
+        "sample_count": 3158,
+        "group_count": 3,
+        "position_observation": "explicit_wrist_joint",
+        "hand_wrist_shared_origin": true,
+        "hand_wrist_origin_rms_m": 0.0,
+        "hand_wrist_origin_p95_m": 0.0,
+        "outlier_fraction": 0.0,
+        "rotation_excitation_rad": 2.9253820741560563,
+        "rotation_rank": 3,
+        "rotation_singular_values": [79.72700793182284, 45.57597272863255, 29.014581192905375]
+      },
+      "valid": true,
+      "reasons": []
+    }
+  },
+  "quality_thresholds": {
+    "min_samples": 60,
+    "min_groups": 3,
+    "min_rotation_excitation_rad": 0.25,
+    "min_rotation_rank": 2,
+    "max_outlier_fraction": 0.15,
+    "max_pivot_rms_m": 0.01,
+    "max_pivot_p95_m": 0.02,
+    "max_wrist_validation_rms_m": 0.02,
+    "max_shared_origin_error_m": 0.005
+  }
+}

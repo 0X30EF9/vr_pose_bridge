@@ -1,0 +1,19 @@
+# Dependencies for:
+# - mocap_ik_http_sim_node.py
+# - mocap_ros_2_bridge_node.py
+#
+# Install:
+#   python -m pip install -r requirements_mocap_ik.txt
+#
+# Notes:
+# - rclpy, sensor_msgs and std_msgs are ROS 2 packages and are not installed from pip.
+#   They are only required by the ROS-backed real/simulation feedback paths.
+# - The package below is named "pin" on pip, but imported as "pinocchio" in code.
+#   If installing Pinocchio from pip fails, use conda-forge:
+#   conda install -c conda-forge pinocchio
+
+numpy
+scipy
+requests
+roslibpy
+pin

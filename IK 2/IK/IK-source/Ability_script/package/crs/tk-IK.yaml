@@ -1,0 +1,12 @@
+kind: AtomAbility
+metadata:
+  name: tk-IK
+
+spec:
+  package: robot.test.org
+  version: 0.1.0
+  abilityName: IKAbility
+  position: localhost
+  config:
+    robotUri: ws://192.168.1.110:9091
+    robotType: TienkungIK

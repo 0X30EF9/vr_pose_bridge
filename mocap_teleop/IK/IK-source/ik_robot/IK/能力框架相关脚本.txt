@@ -1,0 +1,75 @@
+http://192.168.1.111:8080/api/ability-heartbeat
+http://192.168.1.111:8080/api/cr
+http://192.168.1.111:12321/api/status
+
+http://192.168.1.111:8080/api/task/6b9b7aa8-0857-4d73-8f45-a02e7b60ee61/status
+
+
+pyinstaller -F ./Detect_obj_coordsAbility.py 
+
+开启
+
+curl -X POST http://192.168.1.111:8080/api/lifecycle-request \
+  -H "Content-Type: application/json" \
+  -d '{
+    "abilityInstanceId": "6b9b7aa8-0857-4d73-8f45-a02e7b60ee61",
+    "command": "start"
+  }'
+
+
+连接
+curl -X POST http://192.168.1.111:8080/api/lifecycle-request \
+  -H "Content-Type: application/json" \
+  -d '{
+    "abilityInstanceId": "6b9b7aa8-0857-4d73-8f45-a02e7b60ee61",
+    "command": "connect"
+  }'
+
+状态
+curl -X GET "http://192.168.1.111:XXXX/api/status?task_type=0&output_type=0"
+
+
+start:
+
+curl -X POST http://192.168.1.111:XXX/api/task/start_task \
+  -H "Content-Type: application/json" \
+  -d '{
+    "task_type": 1,
+    "interval": 2, 
+    "payload": {    
+        "x": 0.1,     
+        "y": 0.2,
+        "z": 0.3,     
+        "roll": -0.8832,
+        "yaw": 1.6903,
+        "pitch": -0.0060
+    }
+  }'
+
+
+cancel：
+
+curl -X POST http://192.168.1.111:XXX/api/task/cancel_task \
+  -H "Content-Type: application/json" \
+  -d '{
+    "task_type": 1,
+    "interval": 2, 
+    "payload": {    
+        "left": true,     
+        "right": false  
+    }
+  }'
+
+
+
+
+
+
+
+
+
+
+
+
+
+

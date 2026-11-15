@@ -1,0 +1,14 @@
+name: robot.test.org
+version: 0.1.0
+requires-python: ">=3.8"
+dependencies: [
+  "setuptools>=61.0",
+  "autobahn==23.6.2",
+  "flask>=3.0.3",
+  "requests>=2.32.4",
+  "numpy==1.21",
+  "scipy==1.10.1",
+  "kuavo-humanoid-sdk-ws==1.1.6a1495",
+  "pyyaml",
+  "rospkg"
+]
