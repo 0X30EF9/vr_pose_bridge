@@ -87,7 +87,7 @@ class TeleopArmIK:
         if config.home_q is None:
             self.home_q = np.zeros(self.model.nq)
         else:
-            self.home_q = np.asarray(config.home_q, dtype=float)
+            self.home_q = ensure_vector(config.home_q, self.model.nq, "home_q")
         self.home_q = clip_to_limits(self.home_q, self.joint_limits)
         self._log_event(
             "model_load_stage",
@@ -154,8 +154,13 @@ class TeleopArmIK:
         command_ref = clip_to_limits(command_raw, self.joint_limits)
         q = current.copy()
         limited = not np.allclose(current, current_raw, atol=1e-8) or not np.allclose(command_ref, command_raw, atol=1e-8)
-        iterations = max(1, int(self.config.max_iterations if max_iterations is None else max_iterations))
+        iterations = self.config.max_iterations if max_iterations is None else max_iterations
+        if isinstance(iterations, bool) or not isinstance(iterations, (int, np.integer)) or iterations < 1:
+            raise ValueError("max_iterations 必须为正整数")
         dls_damping = float(self.config.damping if damping is None else damping)
+        weights = np.asarray([upper_weight, forearm_weight, dls_damping], dtype=float)
+        if not np.all(np.isfinite(weights)) or np.any(weights < 0.0):
+            raise ValueError("骨段任务权重和阻尼必须为有限非负数")
         error_norm = 0.0
 
         for iteration in range(iterations):
@@ -332,7 +337,9 @@ class TeleopArmIK:
             max_deltas=self.config.stabilized_joint_max_deltas,
             delta_bounds=self.config.stabilized_joint_delta_bounds,
         )
-        q = self._lock_configured_joints(q, ik_input.control_side)
+        q = clip_to_limits(self._lock_configured_joints(q, ik_input.control_side), self.joint_limits)
+        _, final_error = self._build_task(q, ik_input)
+        error_norm = float(np.linalg.norm(final_error))
 
         command = IKCommand(
             timestamp=ik_input.timestamp,
@@ -347,7 +354,7 @@ class TeleopArmIK:
                 "limited": limited,
                 "iterations": iteration + 1,
                 "feedback_command_error": feedback_command_error,
-                "joint_limits_source": "urdf" if self.config.joint_limits is None else "config_override",
+                "joint_limits_source": "urdf" if self.config.joint_limits is None else "urdf_config_intersection",
             },
         )
         result = TeleopIKResult(
@@ -367,22 +374,7 @@ class TeleopArmIK:
         避免入口脚本手写数组和真实机器人模型逐渐漂移。
         """
 
-        if self.config.joint_limits is not None:
-            if len(self.config.joint_limits) != self.model.nq:
-                raise ValueError(f"joint_limits 维度错误: got {len(self.config.joint_limits)}, expected {self.model.nq}")
-            return [(float(lower), float(upper)) for lower, upper in self.config.joint_limits]
-
-        lower = np.asarray(self.model.lowerPositionLimit, dtype=float).reshape(-1)
-        upper = np.asarray(self.model.upperPositionLimit, dtype=float).reshape(-1)
-        if lower.shape[0] != self.model.nq or upper.shape[0] != self.model.nq:
-            raise ValueError(
-                f"URDF 关节限位维度错误: lower={lower.shape[0]}, upper={upper.shape[0]}, nq={self.model.nq}"
-            )
-        if not np.all(np.isfinite(lower)) or not np.all(np.isfinite(upper)):
-            raise ValueError("URDF 关节限位包含 NaN/Inf，禁止启动遥操作")
-        if not np.all(lower < upper):
-            raise ValueError("URDF 关节限位上下界非法，禁止启动遥操作")
-        return [(float(item_lower), float(item_upper)) for item_lower, item_upper in zip(lower, upper)]
+        return resolve_joint_limits(self.model, self.config.joint_limits)
 
     def _build_reduced_model(self):
         joints_to_lock = [
@@ -448,6 +440,7 @@ class TeleopArmIK:
         return locked
 
     def _frame_task(self, q: np.ndarray, frame_id: int, target_pose: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        target_pose = ensure_pose(target_pose, "target_pose")
         current_pose = self.data.oMf[frame_id]
         jacobian = pin.computeFrameJacobian(
             self.model,
@@ -718,11 +711,11 @@ def constrain_stabilized_joints(
             upper_delta = allowed_delta
 
         lower, upper = limits[index]
-        constrained[index] = np.clip(
-            constrained[index],
-            max(lower, home_q[index] + lower_delta),
-            min(upper, home_q[index] + upper_delta),
-        )
+        constrained_lower = max(lower, home_q[index] + lower_delta)
+        constrained_upper = min(upper, home_q[index] + upper_delta)
+        if not np.isfinite(lower_delta) or not np.isfinite(upper_delta) or constrained_lower > constrained_upper:
+            raise ValueError("稳定关节偏移与关节硬限位没有有效交集")
+        constrained[index] = np.clip(constrained[index], constrained_lower, constrained_upper)
     return constrained
 
 
@@ -738,16 +731,24 @@ def apply_joint_safety(
     遥操作不是追求单帧到位，而是追求连续可控；因此这里以 `q_ref` 为中心限制每帧最大变化。
     """
 
-    if not np.all(np.isfinite(q_next)):
-        return clip_to_limits(q_ref, limits), True
-
-    lower = np.asarray([item[0] for item in limits], dtype=float)
-    upper = np.asarray([item[1] for item in limits], dtype=float)
+    q_ref = ensure_vector(q_ref, len(limits), "q_ref")
+    q_next = np.asarray(q_next, dtype=float).reshape(-1)
+    if q_next.shape != q_ref.shape:
+        raise ValueError("q_next 和 q_ref 的维度必须一致")
+    max_step = float(max_step)
+    alpha = float(smoothing_alpha)
+    if not np.isfinite(max_step) or max_step < 0.0:
+        raise ValueError("max_step 必须为有限非负数")
+    if not np.isfinite(alpha) or not 0.0 <= alpha <= 1.0:
+        raise ValueError("smoothing_alpha 必须为 [0, 1] 内的有限数")
+    lower, upper = joint_limit_arrays(limits, q_ref.size)
     q_ref_safe = np.clip(q_ref, lower, upper)
+    if not np.all(np.isfinite(q_next)):
+        return q_ref_safe, True
+
     q_limited = np.clip(q_next, lower, upper)
     q_step_limited = np.clip(q_limited, q_ref_safe - max_step, q_ref_safe + max_step)
     q_step_limited = np.clip(q_step_limited, lower, upper)
-    alpha = float(np.clip(smoothing_alpha, 0.0, 1.0))
     q_smooth = alpha * q_step_limited + (1.0 - alpha) * q_ref_safe
     q_safe = np.clip(q_smooth, lower, upper)
     limited = not np.allclose(q_safe, q_next, atol=1e-8) or not np.allclose(q_ref_safe, q_ref, atol=1e-8)
@@ -755,9 +756,33 @@ def apply_joint_safety(
 
 
 def clip_to_limits(q: np.ndarray, limits: list[tuple[float, float]]) -> np.ndarray:
-    lower = np.asarray([item[0] for item in limits], dtype=float)
-    upper = np.asarray([item[1] for item in limits], dtype=float)
-    return np.clip(np.asarray(q, dtype=float), lower, upper)
+    values = ensure_vector(q, len(limits), "q")
+    lower, upper = joint_limit_arrays(limits, values.size)
+    return np.clip(values, lower, upper)
+
+
+def joint_limit_arrays(limits: list[tuple[float, float]], size: int) -> tuple[np.ndarray, np.ndarray]:
+    bounds = np.asarray(limits, dtype=float)
+    if bounds.shape != (size, 2) or not np.all(np.isfinite(bounds)):
+        raise ValueError(f"joint_limits 必须包含 {size} 组有限上下界")
+    lower, upper = bounds[:, 0], bounds[:, 1]
+    if np.any(lower > upper):
+        raise ValueError("joint_limits 下界不能大于上界")
+    return lower, upper
+
+
+def resolve_joint_limits(model: pin.Model, configured_limits: list[tuple[float, float]] | None) -> list[tuple[float, float]]:
+    lower = ensure_vector(model.lowerPositionLimit, model.nq, "URDF lowerPositionLimit")
+    upper = ensure_vector(model.upperPositionLimit, model.nq, "URDF upperPositionLimit")
+    if np.any(lower >= upper):
+        raise ValueError("URDF 关节限位上下界非法")
+    if configured_limits is not None:
+        configured_lower, configured_upper = joint_limit_arrays(configured_limits, model.nq)
+        lower = np.maximum(lower, configured_lower)
+        upper = np.minimum(upper, configured_upper)
+        if np.any(lower > upper):
+            raise ValueError("配置关节限位与 URDF 硬限位没有交集")
+    return [(float(item_lower), float(item_upper)) for item_lower, item_upper in zip(lower, upper)]
 
 
 def add_operational_frame(model: pin.Model, frame_name: str, parent_joint_name: str, placement: pin.SE3) -> None:
@@ -799,4 +824,13 @@ def ensure_vector(value: np.ndarray, size: int, name: str) -> np.ndarray:
     vector = np.asarray(value, dtype=float).reshape(-1)
     if vector.shape[0] != size:
         raise ValueError(f"{name} 维度错误: got {vector.shape[0]}, expected {size}")
+    if not np.all(np.isfinite(vector)):
+        raise ValueError(f"{name} 包含 NaN/Inf")
     return vector
+
+
+def ensure_pose(value: np.ndarray, name: str) -> np.ndarray:
+    pose = np.asarray(value, dtype=float)
+    if pose.shape != (4, 4) or not np.all(np.isfinite(pose)):
+        raise ValueError(f"{name} 必须是 4x4 有限变换矩阵")
+    return pose

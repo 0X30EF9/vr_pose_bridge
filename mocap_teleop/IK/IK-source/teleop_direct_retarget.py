@@ -8,9 +8,8 @@ from typing import Any
 
 import numpy as np
 
-from teleop_ik_core import TeleopArmIK, apply_joint_safety
+from teleop_ik_core import TeleopArmIK, apply_joint_safety, clip_to_limits
 from teleop_ik_types import ControlSide, IKCommand, TeleopIKConfig
-from teleop_robot_constants import build_relaxed_joint_limits
 
 ARM_JOINTS_PER_SIDE = 7
 ARM_JOINT_COUNT = 14
@@ -43,6 +42,31 @@ class DirectRetargetConfig:
     direction_damping: float = 0.08
     direction_iterations: int = 6
     per_joint_envelope: tuple[float, ...] = (0.70, 0.45, 0.55, 0.80, 0.55, 0.12, 0.12)
+
+    def __post_init__(self) -> None:
+        nonnegative_fields = (
+            "position_scale", "max_joint_delta_per_step", "max_command_delta_from_baseline",
+            "calibration_max_direction_rms_rad", "calibration_max_length_cv",
+            "calibration_max_down_angle_rad", "calibration_max_elbow_angle_rad",
+            "max_joint_position_step_m", "upper_direction_weight", "forearm_direction_weight",
+            "direction_damping",
+        )
+        for name in nonnegative_fields:
+            value = float(getattr(self, name))
+            if not np.isfinite(value) or value < 0.0:
+                raise ValueError(f"{name} 必须为有限非负数")
+        if not np.isfinite(self.smoothing_alpha) or not 0.0 <= self.smoothing_alpha <= 1.0:
+            raise ValueError("smoothing_alpha 必须为 [0, 1] 内的有限数")
+        envelope = np.asarray(self.per_joint_envelope, dtype=float)
+        if envelope.shape != (ARM_JOINTS_PER_SIDE,) or not np.all(np.isfinite(envelope)) or np.any(envelope < 0.0):
+            raise ValueError("per_joint_envelope 必须包含 7 个有限非负数")
+        lengths = np.asarray([self.min_segment_length_m, self.max_segment_length_m, self.max_segment_length_ratio], dtype=float)
+        if not np.all(np.isfinite(lengths)) or not 0.0 < lengths[0] <= lengths[1] or lengths[2] < 1.0:
+            raise ValueError("骨段长度范围及比例非法")
+        for name, minimum in (("calibration_window_frames", 3), ("direction_iterations", 1)):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, (int, np.integer)) or value < minimum:
+                raise ValueError(f"{name} 必须为不小于 {minimum} 的整数")
 
 
 @dataclass(frozen=True)
@@ -107,7 +131,6 @@ class DirectRetargeter:
             TeleopIKConfig(
                 joint_names=config.joint_names,
                 motor_ids=config.motor_ids,
-                joint_limits=build_relaxed_joint_limits(ARM_JOINT_COUNT),
                 max_iterations=config.direction_iterations,
                 damping=config.direction_damping,
                 max_joint_delta_per_step=config.max_joint_delta_per_step,
@@ -131,6 +154,10 @@ class DirectRetargeter:
         timestamp: float | None = None,
     ) -> IKCommand:
         baseline = ensure_arm_q(baseline_q, "baseline_q")
+        bounded_baseline = clip_to_limits(baseline, self.solver.joint_limits)
+        if not np.allclose(baseline, bounded_baseline, atol=1e-8, rtol=0.0):
+            raise ValueError("baseline_q 超出 URDF 关节硬限位，请检查模型与反馈")
+        baseline = bounded_baseline
         if self.state.baseline_q is None:
             self.state.baseline_q = baseline.copy()
             self.solver.set_home_q(baseline)
@@ -263,6 +290,7 @@ class DirectRetargeter:
         if self.state.baseline_q is None:
             raise RuntimeError("baseline_q 尚未初始化")
         held_q = self.state.baseline_q if self.state.last_q_cmd is None else self.state.last_q_cmd
+        held_q = clip_to_limits(held_q, self.solver.joint_limits)
         meta: dict[str, Any] = {
             "solver": SKELETON_RETARGET_SOURCE,
             "source_by_side": {side: reason for side in selected_sides(self.config.control_side)},

@@ -109,7 +109,11 @@ CLI 显示 `HOME` 后，按以下方式站立：
 - 最终标定保存为 `data/workspace_calibration/calibration.json`，已存在时默认不覆盖；
 - 只有显式传入 `--overwrite` 才允许覆盖派生 JSON；原始 session 始终不覆盖。
 
-最终 `calibration.json` 必须满足 `schema_version=1` 且 `valid=true`。官方 IK 的实时遥操作和回放会在启动前加载该文件；文件缺失、版本不兼容或质量未通过时直接拒绝启动。
+`calibration_output` 只指定生成文件的位置。实时遥操作和回放使用 `workspace_calibration.runtime_path` 与 `wrist_calibration.runtime_path` 选择输入标定，默认均为 `null`。未指定标定时采用默认相对映射与 skeleton 腕点，并输出未配置提示。未设置 `runtime_path` 的旧配置也采用此模式，原有 CLI 标定参数仍可使用。
+
+新生成并核验标定后，将两个 `runtime_path` 分别设为对应标定 JSON 的路径，或者在 `teleop` / `replay` 命令中传入 `--workspace-calibration /path/to/workspace.json --wrist-calibration /path/to/wrist.json`。CLI 路径优先于配置。显式指定的文件缺失、JSON 无效、版本不兼容或质量未通过时会拒绝启动。
+
+最终工作空间标定必须满足 `schema_version=1`、`valid=true` 和 `control_frame=wrist_roll`。仓库保留的旧示例使用 `control_frame=L_ee_R_ee`，其原始采集只有手部位姿与胸部位置，缺少解剖腕点观测记录。它不能直接改标签作为新标定使用，需要按当前腕点流程重新采集和扫描。旧示例不会自动成为运行输入。
 
 标定接入后，`position_scale` 只表示标定安全边界内的总增益。左右手和六个方向仍使用标定文件中的独立比例，并在组合方向超界时投影回安全工作空间。
 
@@ -130,6 +134,8 @@ CLI 显示 `HOME` 后，按以下方式站立：
   /home/lenovo/dzy/ik_update/mocap_teleop/IK/run_ik.py \
   workspace-calibrate --stage all --side both
 ```
+
+也可以执行 `python run_ik.py calibrate`，按顺序完成腕点和工作空间标定。已有腕点结果会先通过底层质量验证再复用，工作空间结果先写入独立候选文件，成功后原子替换目标文件。任一阶段失败会保留此前的工作空间结果。标定完成后，再通过 `runtime_path` 或 CLI 标定参数选择新结果。
 
 只采集人体动作：
 

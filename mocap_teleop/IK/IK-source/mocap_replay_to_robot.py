@@ -6,6 +6,7 @@ import json
 import math
 import time
 import threading
+import xml.etree.ElementTree as ET
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,8 @@ from scipy.spatial.transform import Rotation as R
 
 from teleop_ik_adapters import build_rosbridge_motor_message, build_rosbridge_waist_message
 from teleop_ik_types import IKCommand
+from teleop_control_safety import feedback_is_fresh, require_fresh_feedback
+from teleop_joint_schema import arm_joint_limits_from_urdf, arm_positions_from_status
 from teleop_direct_retarget import (
     DirectRetargeter,
     add_direct_retarget_arguments,
@@ -58,6 +61,7 @@ from teleop_robot_constants import (
     WAIST_CMD_TYPE,
     WAIST_ERROR_DESCRIPTIONS,
     WAIST_MOTOR_ID,
+    WAIST_JOINT_NAME,
     WAIST_MOTOR_TEMPLATE,
     WAIST_STATUS_TOPIC,
     WAIST_STATUS_TYPE,
@@ -97,6 +101,7 @@ DEFAULT_MAX_ANGULAR_STEP = 0.8
 DEFAULT_MAX_JOINT_DELTA_PER_STEP = 0.04
 DEFAULT_MAX_COMMAND_DELTA_FROM_BASELINE = 0.5
 DEFAULT_RESTORE_SECONDS = 3.0
+MAX_ARM_STATUS_AGE_SECONDS = 0.5
 MAX_WAIST_STATUS_AGE_SECONDS = 0.5
 
 
@@ -122,8 +127,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-frames", type=int, default=None, help="最多读取多少帧")
     parser.add_argument("--stride", type=int, default=1, help="按帧间隔抽样，默认不抽样")
     parser.add_argument("--position-scale", type=float, default=1.0, help="有效标定安全边界内的总增益")
-    parser.add_argument("--workspace-calibration", type=Path, default=None, help="有效工作空间标定 JSON；手臂 IK 模式必需")
-    parser.add_argument("--wrist-calibration", type=Path, default=None, help="有效人体 hand→wrist 控制点标定 JSON；手臂 IK 模式必需")
+    parser.add_argument("--workspace-calibration", type=Path, default=None, help="可选工作空间标定 JSON；显式指定的文件必须有效")
+    parser.add_argument("--wrist-calibration", type=Path, default=None, help="可选人体 hand→wrist 控制点标定 JSON；显式指定的文件必须有效，省略时使用 skeleton 腕点")
     parser.add_argument("--hand-only", action="store_true", help="只回放双手 IK，强制停发手臂和腰部且不要求工作空间标定")
     parser.add_argument("--orientation-scale", type=float, default=0.25, help="pose 模式的世界系相对手腕旋转增益；默认 0.25 优先保证 TCP 位置")
     parser.add_argument("--max-position-step", type=float, default=DEFAULT_MAX_POSITION_STEP, help="单帧手部位置跳变阈值，单位 m")
@@ -398,48 +403,35 @@ def first_present(item: dict[str, Any], keys: tuple[str, ...]):
 
 
 def normalize_status(msg: dict[str, Any]) -> dict[int, float]:
-    raw_items = msg.get("status", [])
-    if not isinstance(raw_items, list):
-        return {}
-
-    by_id = {}
-    for item in raw_items:
-        if not isinstance(item, dict):
-            continue
-        motor_id = first_present(item, ("name", "id", "motor_id", "motorId"))
-        pos = first_present(item, ("pos", "position", "angle", "q"))
-        try:
-            by_id[int(motor_id)] = float(pos)
-        except Exception:
-            continue
-    return by_id
+    positions = arm_positions_from_status(msg.get("status"))
+    return dict(zip(ARM_MOTOR_IDS, positions))
 
 
 class ArmStatusBuffer:
     def __init__(self):
-        self.samples: list[tuple[float, dict[int, float]]] = []
+        self.sample: tuple[float, np.ndarray] | None = None
         self.lock = threading.Lock()
 
     def callback(self, msg):
-        by_id = normalize_status(msg)
-        if by_id:
-            with self.lock:
-                self.samples.append((time.time(), by_id))
-                if len(self.samples) > 500:
-                    self.samples = self.samples[-500:]
+        try:
+            positions = arm_positions_from_status(msg.get("status"))
+            sample = (time.monotonic(), np.asarray(positions, dtype=float))
+        except (AttributeError, TypeError, ValueError):
+            sample = None
+        with self.lock:
+            self.sample = sample
 
     def latest_complete(self) -> tuple[float, np.ndarray] | None:
         with self.lock:
-            for sample_time, by_id in reversed(self.samples):
-                if all(motor_id in by_id for motor_id in ARM_MOTOR_IDS):
-                    return sample_time, np.asarray([by_id[motor_id] for motor_id in ARM_MOTOR_IDS], dtype=float)
-        return None
+            if self.sample is None:
+                return None
+            return self.sample[0], self.sample[1].copy()
 
     def wait_complete(self, timeout: float) -> tuple[float, np.ndarray] | None:
-        start = time.time()
-        while time.time() - start < timeout:
+        start = time.monotonic()
+        while time.monotonic() - start < timeout:
             sample = self.latest_complete()
-            if sample is not None:
+            if sample is not None and feedback_is_fresh(sample[0], time.monotonic(), MAX_ARM_STATUS_AGE_SECONDS):
                 return sample
             time.sleep(0.05)
         return None
@@ -452,40 +444,47 @@ class WaistStatusBuffer:
         self.lock = threading.Lock()
 
     def callback(self, msg):
-        raw_items = msg.get("status", [])
-        if not isinstance(raw_items, list):
-            return
-        item = None
-        for entry in raw_items:
-            if not isinstance(entry, dict):
-                continue
-            try:
-                motor_id = int(first_present(entry, ("name", "id", "motor_id", "motorId")))
-            except (TypeError, ValueError):
-                continue
-            if motor_id == WAIST_MOTOR_ID:
-                item = entry
-                break
-        if item is None:
-            return
         try:
-            error = int(item.get("error", 0))
-            position = float(first_present(item, ("pos", "position", "angle", "q")))
-        except (TypeError, ValueError):
+            raw_items = msg.get("status", [])
+            if not isinstance(raw_items, list):
+                raise ValueError("腰部状态必须是数组")
+            matches = []
+            for entry in raw_items:
+                if not isinstance(entry, dict):
+                    raise ValueError("腰部状态项无效")
+                raw_id = first_present(entry, ("name", "id", "motor_id", "motorId"))
+                motor_id = int(raw_id)
+                if isinstance(raw_id, bool) or (isinstance(raw_id, float) and raw_id != motor_id):
+                    raise ValueError("腰部电机 ID 无效")
+                if motor_id == WAIST_MOTOR_ID:
+                    matches.append(entry)
+            if len(matches) != 1:
+                raise ValueError("腰部状态缺少或重复电机 ID")
+            item = matches[0]
+            raw_error = float(item.get("error", 0))
+            error = int(raw_error)
+            raw_position = first_present(item, ("pos", "position", "angle", "q"))
+            position = float(raw_position)
+            if isinstance(raw_position, bool) or not math.isfinite(raw_error) or raw_error != 0 or not np.isfinite(position):
+                raise ValueError("腰部位置无效或存在电机告警")
+        except (AttributeError, TypeError, ValueError, OverflowError):
+            with self.lock:
+                self.sample = None
+                self.error = None
             return
         with self.lock:
             self.error = error
-            self.sample = None if error != 0 or not np.isfinite(position) else (time.time(), position)
+            self.sample = (time.monotonic(), position)
 
     def latest_valid(self) -> tuple[float, float] | None:
         with self.lock:
             return self.sample
 
     def wait_valid(self, timeout: float) -> tuple[float, float] | None:
-        start = time.time()
-        while time.time() - start < timeout:
+        start = time.monotonic()
+        while time.monotonic() - start < timeout:
             sample = self.latest_valid()
-            if sample is not None:
+            if sample is not None and feedback_is_fresh(sample[0], time.monotonic(), MAX_WAIST_STATUS_AGE_SECONDS):
                 return sample
             time.sleep(0.05)
         return None
@@ -506,14 +505,16 @@ class HandStatusBuffer:
 
     def callback(self, msg: dict[str, Any]) -> None:
         try:
+            if any(isinstance(value, bool) for value in msg.get("position", ())):
+                raise HandControlError("手部反馈位置不能是布尔值")
             positions = parse_hand_state_message(msg)
-        except HandControlError as exc:
+        except (AttributeError, TypeError, ValueError) as exc:
             with self.lock:
                 self.sample = None
                 self.error = str(exc)
             return
         with self.lock:
-            self.sample = (time.time(), positions)
+            self.sample = (time.monotonic(), positions)
             self.error = None
 
     def latest_valid(self) -> tuple[float, tuple[float, ...]] | None:
@@ -521,8 +522,8 @@ class HandStatusBuffer:
             return self.sample
 
     def wait_valid(self, timeout: float) -> tuple[float, tuple[float, ...]] | None:
-        start = time.time()
-        while time.time() - start < timeout:
+        start = time.monotonic()
+        while time.monotonic() - start < timeout:
             sample = self.latest_valid()
             if sample is not None:
                 return sample
@@ -541,9 +542,9 @@ def active_hand_sides(control_side: str) -> tuple[str, ...]:
 def connect_rosbridge(host: str, port: int, timeout: float) -> roslibpy.Ros:
     client = roslibpy.Ros(host=host, port=port)
     client.run()
-    start = time.time()
+    start = time.monotonic()
     while not client.is_connected:
-        if time.time() - start > timeout:
+        if time.monotonic() - start > timeout:
             raise TimeoutError(f"连接 rosbridge 超时: ws://{host}:{port}")
         time.sleep(0.05)
     return client
@@ -618,7 +619,7 @@ def plan_ik_replay_commands(
         args.workspace_calibration, args.control_side, optional=True
     )
     wrist_calibration = load_wrist_calibration(
-        args.wrist_calibration, args.control_side, optional=True
+        args.wrist_calibration, args.control_side, optional=args.wrist_calibration is None
     )
     mapper = RelativeMocapTargetMapper(
         left_robot_home=left_robot_home,
@@ -1026,17 +1027,170 @@ def confirm_execution(args: argparse.Namespace, command_summary: dict[str, Any])
         raise SystemExit("用户未确认，取消发布")
 
 
+class ReplayFeedbackGate:
+    """Validate measured feedback again at every command publication boundary."""
+
+    def __init__(
+        self,
+        args: argparse.Namespace,
+        client: roslibpy.Ros,
+        arm_status: ArmStatusBuffer | None,
+        waist_status: WaistStatusBuffer | None,
+        hand_status: dict[str, HandStatusBuffer],
+        hand_config: HandControlConfig,
+        baseline_q: np.ndarray | None = None,
+        baseline_waist: float = 0.0,
+    ):
+        self.args = args
+        self.client = client
+        self.arm_status = arm_status
+        self.waist_status = waist_status
+        self.hand_status = hand_status
+        self.hand_config = hand_config
+        self.baseline_q = None if baseline_q is None else self.arm_vector(baseline_q)
+        self.baseline_waist = float(baseline_waist)
+        self.last_arm_command: np.ndarray | None = None
+        self.last_waist_command: float | None = None
+        self.joint_limits: np.ndarray | None = None
+        self.waist_limit: tuple[float, float] | None = None
+        for name in ("rate", "max_joint_delta_per_step", "max_command_delta_from_baseline"):
+            value = float(getattr(args, name))
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError(f"{name} 必须为有限正数")
+        for name in ("spd", "cur"):
+            value = float(getattr(args, name))
+            if not math.isfinite(value) or value < 0:
+                raise ValueError(f"{name} 必须为有限非负数")
+        if not math.isfinite(self.baseline_waist):
+            raise ValueError("腰部 baseline 必须为有限数值")
+        if arm_status is not None:
+            source = Path(__file__).resolve().parent
+            if official_ik_controls_waist(args):
+                model_path = source.parents[2] / "tiangong2pro_ik_v0.2 2" / "tiangong2pro_ik_v0.2" / "tiangong2pro_ik" / "tienkung2_pro" / "urdf" / "tiangong2.0_pro.urdf"
+                joint = ET.parse(model_path).getroot().find(f"joint[@name='{WAIST_JOINT_NAME}']/limit")
+                if joint is None:
+                    raise ValueError("官方 URDF 缺少腰部机械限位")
+                self.waist_limit = (float(joint.attrib["lower"]), float(joint.attrib["upper"]))
+                if not all(math.isfinite(value) for value in self.waist_limit) or self.waist_limit[0] >= self.waist_limit[1]:
+                    raise ValueError("官方 URDF 腰部机械限位无效")
+            else:
+                model_path = source / "models" / "walker_tienkung_ei_description" / "walker_tienkung_ei.urdf"
+            self.joint_limits = np.asarray(arm_joint_limits_from_urdf(model_path), dtype=float)
+
+    @staticmethod
+    def arm_vector(positions: Any) -> np.ndarray:
+        values = np.asarray(positions, dtype=float)
+        if values.shape != (14,) or not np.all(np.isfinite(values)):
+            raise RuntimeError("手臂位置必须包含完整、有限的 14 轴")
+        return values.copy()
+
+    def snapshot(self) -> tuple[np.ndarray | None, float | None]:
+        if not self.client.is_connected:
+            raise RuntimeError("rosbridge 已断开，停止发送控制命令")
+        arm_q = None
+        waist_position = None
+        received_times = []
+        if self.arm_status is not None:
+            sample = self.arm_status.latest_complete()
+            require_fresh_feedback(None if sample is None else sample[0], time.monotonic(), MAX_ARM_STATUS_AGE_SECONDS, "arm/status")
+            arm_q = self.arm_vector(sample[1])
+            received_times.append((sample[0], MAX_ARM_STATUS_AGE_SECONDS, "arm/status"))
+        if self.waist_limit is not None:
+            sample = None if self.waist_status is None else self.waist_status.latest_valid()
+            require_fresh_feedback(None if sample is None else sample[0], time.monotonic(), MAX_WAIST_STATUS_AGE_SECONDS, "waist/status")
+            waist_position = float(sample[1])
+            if not math.isfinite(waist_position):
+                raise RuntimeError("腰部反馈包含 NaN/Inf")
+            received_times.append((sample[0], MAX_WAIST_STATUS_AGE_SECONDS, "waist/status"))
+        if self.hand_config.publish_enabled:
+            for side in active_hand_sides(self.args.control_side):
+                sample = self.hand_sample(side)
+                received_times.append((sample[0], self.hand_config.state_timeout_s, f"{side} hand feedback"))
+        now = time.monotonic()
+        for received_at, timeout, label in received_times:
+            require_fresh_feedback(received_at, now, timeout, label)
+        return arm_q, waist_position
+
+    def hand_sample(self, side: str) -> tuple[float, tuple[float, ...]]:
+        buffer = self.hand_status.get(side)
+        sample = None if buffer is None else buffer.latest_valid()
+        require_fresh_feedback(None if sample is None else sample[0], time.monotonic(), self.hand_config.state_timeout_s, f"{side} hand feedback")
+        if len(sample[1]) != 6 or not all(math.isfinite(value) and 0.0 <= value <= 1.0 for value in sample[1]):
+            raise RuntimeError(f"{side} 手部反馈无效")
+        return sample
+
+    def prepare_arm(self, command: IKCommand, *, enforce_baseline: bool) -> IKCommand:
+        if self.arm_status is None or self.joint_limits is None:
+            raise RuntimeError("发布手臂命令需要实测状态")
+        if tuple(command.motor_ids) != tuple(ARM_MOTOR_IDS) or tuple(command.joint_names) != tuple(IK_ARM_JOINT_NAMES):
+            raise RuntimeError("手臂命令的电机 ID 或关节名与协议不匹配")
+        if command.control_side != self.args.control_side:
+            raise RuntimeError("手臂命令控制侧与回放配置不匹配")
+        target = self.arm_vector(command.positions)
+        current_q, current_waist = self.snapshot()
+        indices = controlled_indices(command.control_side)
+        max_step = self.args.max_joint_delta_per_step
+        lower = np.maximum(self.joint_limits[:, 0], current_q - max_step)
+        upper = np.minimum(self.joint_limits[:, 1], current_q + max_step)
+        if self.last_arm_command is not None:
+            lower = np.maximum(lower, self.last_arm_command - max_step)
+            upper = np.minimum(upper, self.last_arm_command + max_step)
+        if enforce_baseline and self.baseline_q is not None:
+            lower = np.maximum(lower, self.baseline_q - self.args.max_command_delta_from_baseline)
+            upper = np.minimum(upper, self.baseline_q + self.args.max_command_delta_from_baseline)
+        if np.any(lower[indices] > upper[indices]):
+            raise RuntimeError("实测手臂状态与命令安全范围不相容")
+        safe_q = current_q.copy()
+        safe_q[indices] = np.clip(target[indices], lower[indices], upper[indices])
+        safe_waist = command.waist_position
+        if self.waist_limit is not None:
+            if safe_waist is None or not math.isfinite(float(safe_waist)):
+                raise RuntimeError("官方 IK 回放需要有限的腰部命令")
+            lower_waist = max(self.waist_limit[0], current_waist - max_step)
+            upper_waist = min(self.waist_limit[1], current_waist + max_step)
+            if self.last_waist_command is not None:
+                lower_waist = max(lower_waist, self.last_waist_command - max_step)
+                upper_waist = min(upper_waist, self.last_waist_command + max_step)
+            if enforce_baseline:
+                lower_waist = max(lower_waist, self.baseline_waist - self.args.max_command_delta_from_baseline)
+                upper_waist = min(upper_waist, self.baseline_waist + self.args.max_command_delta_from_baseline)
+            if lower_waist > upper_waist:
+                raise RuntimeError("实测腰部状态与命令安全范围不相容")
+            safe_waist = float(np.clip(float(safe_waist), lower_waist, upper_waist))
+        elif safe_waist is not None:
+            raise RuntimeError("当前回放模式未启用腰部反馈，拒绝腰部命令")
+        return replace(command, positions=safe_q, waist_position=safe_waist)
+
+
 def publish_command(
     arm_topic: roslibpy.Topic,
     command: IKCommand,
     templates: list[dict[str, Any]],
     waist_topic: roslibpy.Topic | None = None,
-) -> None:
-    arm_topic.publish(build_rosbridge_motor_message(command, templates))
+    *,
+    safety: ReplayFeedbackGate,
+    enforce_baseline: bool = True,
+) -> IKCommand:
+    expected_ids = [ARM_MOTOR_IDS[index] for index in controlled_indices(command.control_side)]
+    if [template.get("name") for template in templates] != expected_ids:
+        raise RuntimeError("发布模板的电机 ID 与控制侧不匹配")
+    for template in templates:
+        for field in ("spd", "cur"):
+            value = float(template[field])
+            if not math.isfinite(value) or value < 0:
+                raise RuntimeError(f"电机 {field} 必须为有限非负数")
+    command = safety.prepare_arm(command, enforce_baseline=enforce_baseline)
     if command.waist_position is not None:
         if waist_topic is None:
             raise RuntimeError("IKCommand 包含腰部命令，但 /waist/cmd_pos 发布器未初始化")
+    arm_topic.publish(build_rosbridge_motor_message(command, templates))
+    safety.last_arm_command = command.positions.copy()
+    if command.waist_position is not None:
+        checked = safety.prepare_arm(command, enforce_baseline=enforce_baseline)
+        command = replace(command, waist_position=checked.waist_position)
         waist_topic.publish(build_rosbridge_waist_message(command, WAIST_MOTOR_TEMPLATE))
+        safety.last_waist_command = command.waist_position
+    return command
 
 
 def advertise_hand_command_topics(
@@ -1054,44 +1208,118 @@ def advertise_hand_command_topics(
     return topics
 
 
+def validate_hand_output(
+    output: dict[str, tuple[float, ...]] | None,
+    topics: dict[str, roslibpy.Topic],
+) -> None:
+    if output is not None:
+        for side in topics:
+            if side in output:
+                build_hand_joint_state_message(output[side])
+
+
 def publish_hand_output(
     output: dict[str, tuple[float, ...]] | None,
     topics: dict[str, roslibpy.Topic],
     status_buffers: dict[str, HandStatusBuffer],
     last_commands: dict[str, tuple[float, ...] | None],
     config: HandControlConfig,
+    *,
+    safety: ReplayFeedbackGate,
 ) -> None:
+    safety.snapshot()
+    validate_hand_output(output, topics)
     if output is None:
         return
-    now = time.time()
     for side, topic in topics.items():
         target = output.get(side)
-        status_buffer = status_buffers.get(side)
-        sample = None if status_buffer is None else status_buffer.latest_valid()
-        if target is None or sample is None or now - sample[0] > config.state_timeout_s:
+        if target is None:
             continue
-        try:
-            safe = apply_hand_command_safety(
-                target,
-                sample[1],
-                last_commands.get(side),
-                side,
-                config,
-            )
-            topic.publish(build_hand_joint_state_message(safe))
-        except HandControlError:
-            continue
+        safety.snapshot()
+        sample = safety.hand_sample(side)
+        safe = apply_hand_command_safety(target, sample[1], None, side, config)
+        previous = last_commands.get(side)
+        if previous is not None:
+            safe = tuple(float(value) for value in np.clip(safe, np.asarray(previous) - config.max_step, np.asarray(previous) + config.max_step))
+        if any(abs(value - measured) > config.max_step + 1e-9 for value, measured in zip(safe, sample[1])):
+            raise RuntimeError(f"{side} 手部命令与最新反馈的变化过大")
+        topic.publish(build_hand_joint_state_message(safe))
         last_commands[side] = safe
 
 
-def restore_hand_baselines(
-    topics: dict[str, roslibpy.Topic],
-    baselines: dict[str, tuple[float, ...]],
+def restore_baselines(
+    args: argparse.Namespace,
+    safety: ReplayFeedbackGate,
+    hand_topics: dict[str, roslibpy.Topic],
+    hand_baselines: dict[str, tuple[float, ...]],
+    last_hand_commands: dict[str, tuple[float, ...] | None],
+    arm_topic: roslibpy.Topic | None = None,
+    templates: list[dict[str, Any]] | None = None,
+    baseline_q: np.ndarray | None = None,
+    waist_topic: roslibpy.Topic | None = None,
+    baseline_waist: float | None = None,
+    duration: float | None = None,
 ) -> None:
-    for side, topic in topics.items():
-        baseline = baselines.get(side)
-        if baseline is not None:
-            topic.publish(build_hand_joint_state_message(baseline))
+    """Return toward measured baselines with a deadline and a finite step budget."""
+    interval = 1.0 / args.rate
+    duration = args.restore_seconds if duration is None else duration
+    if not math.isfinite(duration) or duration < 0:
+        raise ValueError("恢复时间必须为有限非负数")
+    duration = max(interval, duration)
+    steps = min(1000, max(1, math.ceil(duration / interval)))
+    deadline = time.monotonic() + duration
+    if baseline_q is not None:
+        baseline_q = safety.arm_vector(baseline_q)
+        indices = controlled_indices(args.control_side)
+        if np.any(baseline_q[indices] < safety.joint_limits[indices, 0]) or np.any(baseline_q[indices] > safety.joint_limits[indices, 1]):
+            raise RuntimeError("手臂恢复目标超出机械限位")
+    else:
+        indices = []
+    for side in hand_topics:
+        if side not in hand_baselines:
+            raise RuntimeError(f"缺少 {side} 手部恢复目标")
+        build_hand_joint_state_message(hand_baselines[side])
+    if safety.waist_limit is not None and (
+        baseline_waist is None or not math.isfinite(baseline_waist) or
+        not safety.waist_limit[0] <= baseline_waist <= safety.waist_limit[1]
+    ):
+        raise RuntimeError("腰部恢复目标超出机械限位")
+
+    for step in range(steps + 1):
+        measured_q, measured_waist = safety.snapshot()
+        # Feedback can lag at home while an accepted target is still away from
+        # home. Replace that outstanding target before reporting restoration.
+        arm_done = baseline_q is None or (
+            max_joint_delta(baseline_q, measured_q, indices) <= 1e-3 and
+            (safety.last_arm_command is None or max_joint_delta(baseline_q, safety.last_arm_command, indices) <= 1e-3)
+        )
+        waist_done = baseline_waist is None or (
+            abs(baseline_waist - measured_waist) <= 1e-3 and
+            (safety.last_waist_command is None or abs(baseline_waist - safety.last_waist_command) <= 1e-3)
+        )
+        hands_done = all(
+            max(abs(target - measured) for target, measured in zip(hand_baselines[side], safety.hand_sample(side)[1])) <= 1e-3 and
+            (last_hand_commands.get(side) is None or
+             max(abs(target - submitted) for target, submitted in zip(hand_baselines[side], last_hand_commands[side])) <= 1e-3)
+            for side in hand_topics
+        )
+        if arm_done and waist_done and hands_done:
+            return
+        if step == steps or time.monotonic() >= deadline:
+            raise RuntimeError("恢复未在有限步数和时限内得到实测确认，停止发送")
+        if arm_topic is not None and (not arm_done or not waist_done):
+            publish_command(
+                arm_topic, restore_command(args, baseline_q, baseline_waist), templates,
+                waist_topic, safety=safety, enforce_baseline=False,
+            )
+        if hand_topics and not hands_done:
+            publish_hand_output(
+                hand_baselines, hand_topics, safety.hand_status, last_hand_commands,
+                safety.hand_config, safety=safety,
+            )
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            time.sleep(min(interval, remaining))
 
 
 def restore_command(
@@ -1121,20 +1349,18 @@ def prepose_to_baseline(
     args: argparse.Namespace,
     topic: roslibpy.Topic,
     templates: list[dict[str, Any]],
-    current_q: np.ndarray | None,
     baseline_q: np.ndarray,
+    *,
+    safety: ReplayFeedbackGate,
+    waist_topic: roslibpy.Topic | None = None,
+    baseline_waist: float | None = None,
 ) -> None:
     if args.prepose == "none":
         return
-    start_q = np.asarray(current_q, dtype=float).copy() if current_q is not None else baseline_q.copy()
-    steps = max(1, int(args.prepose_steps))
-    interval = max(0.0, float(args.prepose_seconds)) / steps
-    for step_index in range(1, steps + 1):
-        alpha = step_index / steps
-        q = start_q + (baseline_q - start_q) * alpha
-        publish_command(topic, restore_command(args, q), templates)
-        if interval > 0:
-            time.sleep(interval)
+    restore_baselines(
+        args, safety, {}, {}, {}, topic, templates, baseline_q, waist_topic,
+        baseline_waist, duration=args.prepose_seconds,
+    )
     print_json_line("PREPOSE_BASELINE", {"mode": args.prepose, "seconds": args.prepose_seconds, "positions": baseline_q})
 
 
@@ -1150,6 +1376,13 @@ def execute_ik_replay_streaming(
     hand_baselines: dict[str, tuple[float, ...]],
     hand_control_config: HandControlConfig,
 ) -> int:
+    # An explicitly requested bad calibration must fail before prepose can move.
+    workspace_calibration = load_workspace_calibration(
+        args.workspace_calibration, args.control_side, optional=args.workspace_calibration is None
+    )
+    wrist_calibration = load_wrist_calibration(
+        args.wrist_calibration, args.control_side, optional=args.wrist_calibration is None
+    )
     from teleop_ik_core import apply_joint_safety
     from teleop_ik_types import TeleopIKInput
 
@@ -1167,17 +1400,23 @@ def execute_ik_replay_streaming(
     last_hand_commands: dict[str, tuple[float, ...] | None] = {
         side: None for side in hand_cmd_topics
     }
+    safety = ReplayFeedbackGate(
+        args, client, status_buffer, waist_status_buffer, hand_status_buffers,
+        hand_control_config, baseline_q, baseline_waist,
+    )
     hand_sidecar = None
     if hand_cmd_topics and hand_ik_enabled(args):
         try:
             hand_sidecar = Revo2HandIkSidecar(hand_ik_config_from_args(args))
         except Exception as exc:
-            print(f"WARN_HAND_IK_START hand commands disabled for replay: {exc}")
+            raise RuntimeError(f"手部 IK 启动失败，取消回放: {exc}") from exc
     time.sleep(0.2)
 
-    initial_sample = status_buffer.latest_complete()
-    initial_q = None if initial_sample is None else initial_sample[1]
-    prepose_to_baseline(args, cmd_topic, templates, initial_q, baseline_q)
+    prepose_to_baseline(
+        args, cmd_topic, templates, baseline_q, safety=safety,
+        waist_topic=waist_cmd_topic,
+        baseline_waist=baseline_waist if controls_waist else None,
+    )
     post_prepose_sample = status_buffer.latest_complete()
     if post_prepose_sample is not None:
         _, post_prepose_q = post_prepose_sample
@@ -1211,12 +1450,6 @@ def execute_ik_replay_streaming(
         raise RuntimeError("当前 IK 后端未提供 wrist-roll 控制点 FK，无法建立机器人手腕 Home")
     left_robot_home, right_robot_home = solver.wrist_effector_poses(baseline_q)
     left_wrist_to_tcp, right_wrist_to_tcp = solver.wrist_to_tcp_transforms()
-    workspace_calibration = load_workspace_calibration(
-        args.workspace_calibration, args.control_side, optional=True
-    )
-    wrist_calibration = load_wrist_calibration(
-        args.wrist_calibration, args.control_side, optional=True
-    )
     mapper = RelativeMocapTargetMapper(
         left_robot_home=left_robot_home,
         right_robot_home=right_robot_home,
@@ -1247,24 +1480,8 @@ def execute_ik_replay_streaming(
     try:
         for index, frame in enumerate(frames):
             frame_start = time.perf_counter()
-            current_q = baseline_q if last_command_q is None else last_command_q
-            current_waist = last_waist_command
-            if controls_waist:
-                waist_sample = waist_status_buffer.latest_valid()
-                if waist_sample is None or time.time() - waist_sample[0] > MAX_WAIST_STATUS_AGE_SECONDS:
-                    error = waist_status_buffer.error_description()
-                    print(
-                        f"FAIL_WAIST_STATUS topic={WAIST_STATUS_TOPIC} "
-                        f"max_age={MAX_WAIST_STATUS_AGE_SECONDS}s error={error or 'missing_or_stale'}"
-                    )
-                    publish_command(
-                        cmd_topic,
-                        restore_command(args, baseline_q, baseline_waist),
-                        templates,
-                        waist_cmd_topic,
-                    )
-                    return 14
-                current_waist = float(waist_sample[1])
+            solve_started_at = time.monotonic()
+            current_q, current_waist = safety.snapshot()
             left_mocap_wrist = replay_anatomical_wrist_pose(frame, "left", wrist_calibration)
             right_mocap_wrist = replay_anatomical_wrist_pose(frame, "right", wrist_calibration)
             mocap_reference_position = replay_mocap_reference_position(frame, workspace_calibration)
@@ -1296,6 +1513,7 @@ def execute_ik_replay_streaming(
                     current_waist_position=current_waist if controls_waist else None,
                 )
             )
+            current_q, current_waist = safety.snapshot()
             if result.reason != "ok":
                 behavior_reasons: dict[str, tuple[str, ...]] = {
                     "solver": (result.reason,)
@@ -1305,7 +1523,7 @@ def execute_ik_replay_streaming(
                     solver,
                     result,
                     target_mapping,
-                    current_q if last_command_q is None else last_command_q,
+                    current_q,
                     args,
                 )
             if behavior_reasons:
@@ -1313,13 +1531,6 @@ def execute_ik_replay_streaming(
                     "FAIL_WRIST_BEHAVIOR",
                     {"frame": index + 1, "reasons": behavior_reasons},
                 )
-                publish_command(
-                    cmd_topic,
-                    restore_command(args, baseline_q, baseline_waist if controls_waist else None),
-                    templates,
-                    waist_cmd_topic,
-                )
-                print("PUBLISHED_RESTORE_BASELINE_AFTER_WRIST_FAIL")
                 return 16
             safe_q, limited = apply_joint_safety(
                 q_next=np.asarray(result.command.positions, dtype=float),
@@ -1353,40 +1564,29 @@ def execute_ik_replay_streaming(
                         "top_joint_deltas": joint_delta_report(safe_q, baseline_q, indices, limit=5),
                     },
                 )
-                publish_command(
-                    cmd_topic,
-                    restore_command(args, baseline_q, baseline_waist if controls_waist else None),
-                    templates,
-                    waist_cmd_topic,
-                )
-                print("PUBLISHED_RESTORE_BASELINE_AFTER_FAIL")
-                time.sleep(min(max(args.restore_seconds, 0.0), 1.0))
                 return 13
 
             command = replace(result.command, positions=safe_q, waist_position=safe_waist)
-            publish_command(cmd_topic, command, templates, waist_cmd_topic)
+            hand_output = None
             if hand_sidecar is not None:
-                try:
-                    hand_result = hand_sidecar.solve_replay_frame(frame)
-                    hand_output: dict[str, tuple[float, ...]] = {}
-                    if hand_result.left_calibrated:
-                        hand_output["left"] = map_hand_radians(
-                            hand_result.joint_positions, "left", hand_control_config
-                        )
-                    if hand_result.right_calibrated:
-                        hand_output["right"] = map_hand_radians(
-                            hand_result.joint_positions, "right", hand_control_config
-                        )
-                    publish_hand_output(
-                        hand_output or None,
-                        hand_cmd_topics,
-                        hand_status_buffers,
-                        last_hand_commands,
-                        hand_control_config,
+                hand_result = hand_sidecar.solve_replay_frame(frame)
+                hand_output = {}
+                if hand_result.left_calibrated:
+                    hand_output["left"] = map_hand_radians(
+                        hand_result.joint_positions, "left", hand_control_config
                     )
-                except (HandIkError, HandControlError) as exc:
-                    if index == 0 or (index + 1) % 20 == 0:
-                        print(f"WARN_HAND_FRAME frame={index + 1} error={exc}")
+                if hand_result.right_calibrated:
+                    hand_output["right"] = map_hand_radians(
+                        hand_result.joint_positions, "right", hand_control_config
+                    )
+            validate_hand_output(hand_output, hand_cmd_topics)
+            require_fresh_feedback(solve_started_at, time.monotonic(), MAX_ARM_STATUS_AGE_SECONDS, "IK result")
+            command = publish_command(cmd_topic, command, templates, waist_cmd_topic, safety=safety)
+            safe_q, safe_waist = command.positions, command.waist_position
+            publish_hand_output(
+                hand_output or None, hand_cmd_topics, hand_status_buffers,
+                last_hand_commands, hand_control_config, safety=safety,
+            )
 
             solve_seconds = time.perf_counter() - frame_start
             max_solve_seconds = max(max_solve_seconds, solve_seconds)
@@ -1473,17 +1673,14 @@ def execute_ik_replay_streaming(
             _, moved_q = after_move
             print(f"MOVE_FEEDBACK_MAX_DELTA {float(np.max(np.abs(moved_q[indices] - baseline_q[indices]))):.6f}")
 
-        publish_command(
-            cmd_topic,
-            restore_command(args, baseline_q, baseline_waist if controls_waist else None),
-            templates,
-            waist_cmd_topic,
+        restore_baselines(
+            args, safety, hand_cmd_topics, hand_baselines, last_hand_commands,
+            cmd_topic, templates, baseline_q, waist_cmd_topic,
+            baseline_waist if controls_waist else None,
         )
         print("PUBLISHED_RESTORE_BASELINE")
-        restore_hand_baselines(hand_cmd_topics, hand_baselines)
         if hand_cmd_topics:
             print("PUBLISHED_RESTORE_HAND_BASELINES")
-        time.sleep(args.restore_seconds)
 
         restored = status_buffer.latest_complete()
         if restored is not None:
@@ -1492,6 +1689,12 @@ def execute_ik_replay_streaming(
 
         print("PASS mocap replay streaming command sequence published")
         return 0
+    except KeyboardInterrupt:
+        print("ABORT_REPLAY interrupted; further motion commands stopped")
+        return 130
+    except Exception as exc:
+        print(f"ABORT_REPLAY {exc}; further motion commands stopped")
+        return 14
     finally:
         try:
             cmd_topic.unadvertise()
@@ -1525,6 +1728,9 @@ def execute_hand_only_replay(
     last_hand_commands: dict[str, tuple[float, ...] | None] = {
         side: None for side in hand_cmd_topics
     }
+    safety = ReplayFeedbackGate(
+        args, client, None, None, hand_status_buffers, hand_control_config,
+    )
     interval = 1.0 / args.rate
     start = time.perf_counter()
     try:
@@ -1535,18 +1741,24 @@ def execute_hand_only_replay(
                 hand_status_buffers,
                 last_hand_commands,
                 hand_control_config,
+                safety=safety,
             )
             next_time = start + (index + 1) * interval
             sleep_seconds = next_time - time.perf_counter()
             if sleep_seconds > 0:
                 time.sleep(sleep_seconds)
 
-        restore_hand_baselines(hand_cmd_topics, hand_baselines)
+        restore_baselines(args, safety, hand_cmd_topics, hand_baselines, last_hand_commands)
         if hand_cmd_topics:
             print("PUBLISHED_RESTORE_HAND_BASELINES")
-        time.sleep(args.restore_seconds)
         print("PASS hand-only replay published; arm_and_waist_commands=0")
         return 0
+    except KeyboardInterrupt:
+        print("ABORT_REPLAY interrupted; further motion commands stopped")
+        return 130
+    except Exception as exc:
+        print(f"ABORT_REPLAY {exc}; further motion commands stopped")
+        return 14
     finally:
         for hand_topic in hand_cmd_topics.values():
             try:
@@ -1567,6 +1779,7 @@ def execute_replay(
     hand_status_buffers: dict[str, HandStatusBuffer],
     hand_baselines: dict[str, tuple[float, ...]],
     hand_control_config: HandControlConfig,
+    waist_status_buffer: WaistStatusBuffer | None = None,
 ) -> int:
     templates = make_motor_templates(args.control_side, args.spd, args.cur)
     cmd_topic = roslibpy.Topic(client, ARM_CMD_TOPIC, ARM_CMD_TYPE)
@@ -1580,24 +1793,32 @@ def execute_replay(
     last_hand_commands: dict[str, tuple[float, ...] | None] = {
         side: None for side in hand_cmd_topics
     }
+    safety = ReplayFeedbackGate(
+        args, client, status_buffer, waist_status_buffer, hand_status_buffers,
+        hand_control_config, baseline_q, baseline_waist,
+    )
     time.sleep(0.2)
 
-    initial_sample = status_buffer.latest_complete()
-    initial_q = None if initial_sample is None else initial_sample[1]
-    prepose_to_baseline(args, cmd_topic, templates, initial_q, baseline_q)
+    prepose_to_baseline(
+        args, cmd_topic, templates, baseline_q, safety=safety,
+        waist_topic=waist_cmd_topic,
+        baseline_waist=baseline_waist if controls_waist else None,
+    )
 
     interval = 1.0 / args.rate
     start = time.perf_counter()
     try:
         for index, command in enumerate(commands):
-            publish_command(cmd_topic, command, templates, waist_cmd_topic)
             hand_output = hand_outputs[index] if index < len(hand_outputs) else None
+            validate_hand_output(hand_output, hand_cmd_topics)
+            publish_command(cmd_topic, command, templates, waist_cmd_topic, safety=safety)
             publish_hand_output(
                 hand_output,
                 hand_cmd_topics,
                 hand_status_buffers,
                 last_hand_commands,
                 hand_control_config,
+                safety=safety,
             )
             next_time = start + (index + 1) * interval
             sleep_seconds = next_time - time.perf_counter()
@@ -1610,17 +1831,14 @@ def execute_replay(
             indices = controlled_indices(args.control_side)
             print(f"MOVE_FEEDBACK_MAX_DELTA {float(np.max(np.abs(moved_q[indices] - baseline_q[indices]))):.6f}")
 
-        publish_command(
-            cmd_topic,
-            restore_command(args, baseline_q, baseline_waist if controls_waist else None),
-            templates,
-            waist_cmd_topic,
+        restore_baselines(
+            args, safety, hand_cmd_topics, hand_baselines, last_hand_commands,
+            cmd_topic, templates, baseline_q, waist_cmd_topic,
+            baseline_waist if controls_waist else None,
         )
         print("PUBLISHED_RESTORE_BASELINE")
-        restore_hand_baselines(hand_cmd_topics, hand_baselines)
         if hand_cmd_topics:
             print("PUBLISHED_RESTORE_HAND_BASELINES")
-        time.sleep(args.restore_seconds)
 
         restored = status_buffer.latest_complete()
         if restored is not None:
@@ -1630,6 +1848,12 @@ def execute_replay(
 
         print("PASS mocap replay command sequence published")
         return 0
+    except KeyboardInterrupt:
+        print("ABORT_REPLAY interrupted; further motion commands stopped")
+        return 130
+    except Exception as exc:
+        print(f"ABORT_REPLAY {exc}; further motion commands stopped")
+        return 14
     finally:
         try:
             cmd_topic.unadvertise()
@@ -1669,13 +1893,12 @@ def main() -> int:
     if (
         not args.hand_only
         and args.control_mode == "ik"
-        and args.ik_backend in {"tiangong2pro_official", "ubtech_casadi"}
     ):
         workspace_calibration = load_workspace_calibration(
-            args.workspace_calibration, args.control_side, optional=True
+            args.workspace_calibration, args.control_side, optional=args.workspace_calibration is None
         )
         wrist_calibration = load_wrist_calibration(
-            args.wrist_calibration, args.control_side, optional=True
+            args.wrist_calibration, args.control_side, optional=args.wrist_calibration is None
         )
         if workspace_calibration is not None:
             print(f"REPLAY_CALIBRATION_INFO 已加载 workspace 参考标定: {workspace_calibration.source_path}")
@@ -1871,6 +2094,7 @@ def main() -> int:
             hand_status_buffers,
             hand_baselines,
             hand_control_config,
+            waist_status_buffer=waist_status_buffer,
         )
     finally:
         if status_topic is not None:
