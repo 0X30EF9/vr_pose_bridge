@@ -1,0 +1,166 @@
+{
+  "environment": {
+    "python": "3.12.16 (main, Oct 26 2026, 11:37:43) [GCC 15.3.0]",
+    "platform": "Linux-7.0.0-42-generic-x86_64-with-glibc2.43",
+    "numpy": "2.3.5",
+    "scipy": "1.18.1",
+    "pinocchio": "3.7.0",
+    "threads": {
+      "OPENBLAS_NUM_THREADS": "1",
+      "OMP_NUM_THREADS": "1",
+      "MKL_NUM_THREADS": null
+    }
+  },
+  "source_sha256": {
+    "tools/benchmark_control_loop.py": "b180b67354c51184cd5ea868bca50e1d25de61adbfb7f7db193d710c5de75636",
+    "tools/benchmark_ik.py": "924dca8ebb186b05bbcfca36e843bda363cdb004600bdf787f342a5250f9599a",
+    "app/src/mocap_ros_2_bridge_node.py": "1cc526224ddfe1265194451d7e05f0dc7bb113432d0e37505c75216f6068cf73",
+    "app/src/teleop_ik_core.py": "42ca98bfd5f299ac80662e24b9874743a097d83a6357ec8d6a729fd23bbcbf18",
+    "app/src/teleop_skeleton_retarget.py": "34642a6b3f250509c0b21dd8d385e1004d94c5bc16d699c660f1e7cbaea1699e",
+    "app/src/teleop_direct_retarget.py": "918b88faf85dc5eff14b4e1e7ed2e61be826171bebd59648943bfc5ccb0c5cca",
+    "app/src/teleop_hand_ik.py": "b07d7b29ce7a3d3420300a673bb444b393b864ab0b02c9fa318a1afa74492504",
+    "app/src/teleop_control_safety.py": "5f0744ae1b1916d654d172492c5e2f990a88a262f5e6e5d3dd0c3f29f55b4842",
+    "app/src/tests/test_bridge_boundaries.py": "0758758a103c60cc9a0b3c0117be47c6342fa6942f9b10aff242def2abdb03d2",
+    "app/src/models/walker_tienkung_ei_description/walker_tienkung_ei.urdf": "f6a36cec66febaf8e86093ef05f10696bac2d97e21b5d1aa5206a15ca428d877"
+  },
+  "startup_excluded": "215 natural-down frames with a real 2 second gate; in-flight hand results invalidated before measurement",
+  "scope": "software callback, real kinematics, in-memory ROS publishers and fake 50ms SDK; no network, vendor .so or physical robot",
+  "cases": [
+    {
+      "mode": "follow",
+      "frames": 600,
+      "control_rate": 100,
+      "feedback_rate": 100,
+      "input_timestamp_keys_unique": 815,
+      "periodic_json_log_rate_hz": 1,
+      "callback_ms": {
+        "count": 600,
+        "p50": 6.201131,
+        "p95": 7.817742799999998,
+        "p99": 8.78241282,
+        "max": 10.111735999999999
+      },
+      "ik_ms": {
+        "count": 600,
+        "p50": 5.3967279999999995,
+        "p95": 6.921705549999999,
+        "p99": 7.706364239999999,
+        "max": 8.795316999999999
+      },
+      "callback_overruns_10ms": 1,
+      "dispatch_lateness_ms": {
+        "count": 600,
+        "p50": 0.06440799916163087,
+        "p95": 0.08129531634040177,
+        "p99": 0.09390386869199574,
+        "max": 1.9866479560732841
+      },
+      "arm_sends": 600,
+      "arm_send_interval_ms": {
+        "count": 599,
+        "p50": 10.001246933825314,
+        "p95": 11.620538693387061,
+        "p99": 12.300536113325496,
+        "max": 14.248301042243838
+      },
+      "arm_send_hz": 99.94296011565369,
+      "hand_sdk_calls": 119,
+      "hand_sdk_completed": 118,
+      "hand_sdk_ms": {
+        "count": 118,
+        "p50": 50.10091693839058,
+        "p95": 52.24418930592947,
+        "p99": 53.22241921327077,
+        "max": 53.54539095424116
+      },
+      "hand_fresh_results": 118,
+      "hand_fresh_completed_ratio": 1.0,
+      "hand_result_age_ms": {
+        "count": 118,
+        "p50": 66.41604396281764,
+        "p95": 75.39659083122388,
+        "p99": 76.42545702634379,
+        "max": 77.39268196746707
+      },
+      "hand_sends": {
+        "left": 118,
+        "right": 118
+      },
+      "command_faulted": false,
+      "constraint_max_violation_rad": {
+        "measured_step": 0.0,
+        "submitted_velocity": 0.0,
+        "hard_limit": 0.0
+      },
+      "scope": "real Pinocchio mapper and live callback; fake ROS transport and measured plant; 50ms sleeping hand SDK; no hardware"
+    },
+    {
+      "mode": "stagnant",
+      "frames": 600,
+      "control_rate": 100,
+      "feedback_rate": 100,
+      "input_timestamp_keys_unique": 815,
+      "periodic_json_log_rate_hz": 1,
+      "callback_ms": {
+        "count": 600,
+        "p50": 6.390194999999999,
+        "p95": 7.895977799999999,
+        "p99": 8.926116809999998,
+        "max": 10.232406
+      },
+      "ik_ms": {
+        "count": 600,
+        "p50": 5.5673665,
+        "p95": 6.815119849999999,
+        "p99": 8.00839544,
+        "max": 8.675856
+      },
+      "callback_overruns_10ms": 1,
+      "dispatch_lateness_ms": {
+        "count": 600,
+        "p50": 0.06917939754202962,
+        "p95": 0.09255756158381699,
+        "p99": 0.10216678259894248,
+        "max": 0.32724393531680107
+      },
+      "arm_sends": 600,
+      "arm_send_interval_ms": {
+        "count": 599,
+        "p50": 10.007126023992896,
+        "p95": 11.438572953920813,
+        "p99": 12.515917352866381,
+        "max": 13.997440924867988
+      },
+      "arm_send_hz": 99.98174516804181,
+      "hand_sdk_calls": 119,
+      "hand_sdk_completed": 118,
+      "hand_sdk_ms": {
+        "count": 118,
+        "p50": 50.098201958462596,
+        "p95": 52.48015435645356,
+        "p99": 54.199474601773545,
+        "max": 54.567724000662565
+      },
+      "hand_fresh_results": 118,
+      "hand_fresh_completed_ratio": 1.0,
+      "hand_result_age_ms": {
+        "count": 118,
+        "p50": 66.46983500104398,
+        "p95": 75.96565420972183,
+        "p99": 77.55046411883086,
+        "max": 77.71405903622508
+      },
+      "hand_sends": {
+        "left": 118,
+        "right": 118
+      },
+      "command_faulted": false,
+      "constraint_max_violation_rad": {
+        "measured_step": 0.0,
+        "submitted_velocity": 0.0,
+        "hard_limit": 0.0
+      },
+      "scope": "real Pinocchio mapper and live callback; fake ROS transport and measured plant; 50ms sleeping hand SDK; no hardware"
+    }
+  ]
+}

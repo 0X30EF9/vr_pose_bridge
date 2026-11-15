@@ -1,0 +1,375 @@
+{
+  "scope": "deterministic dynamic 64-node mapper; excludes ROS, network and hand SDK",
+  "baseline_commit": "d55120f372daae3473ca15c05f60cdf086ec03c0",
+  "blas_actual": "BLIS 4, bli_thread_get_num_threads=1 before and after",
+  "before": {
+    "environment": {
+      "cpu": "Intel(R) Xeon(R) CPU E5-2690 v4 @ 2.60GHz",
+      "logical_cpus": 28,
+      "python": "3.12.16",
+      "platform": "Linux-7.0.0-42-generic-x86_64-with-glibc2.43",
+      "pinocchio": "3.6.0",
+      "numpy": "2.5.4",
+      "thread_environment": {
+        "OPENBLAS_NUM_THREADS": "1",
+        "OMP_NUM_THREADS": "1",
+        "MKL_NUM_THREADS": "1",
+        "BLIS_NUM_THREADS": "1"
+      }
+    },
+    "source_sha256": {
+      "teleop_ik_core": "a5b48f0f9ccf82e5a861b957548efab7044ebbe4b43962e5f2c285082674f5fc",
+      "teleop_skeleton_retarget": "5c1fb9383ed333ad9d4cbc75a6099d17832fb563f106fa9753af6298858922fe",
+      "teleop_direct_retarget": "918b88faf85dc5eff14b4e1e7ed2e61be826171bebd59648943bfc5ccb0c5cca",
+      "teleop_ik_types": "d7e6e617c9636a800a86bc09e6a8d3c677028fe40e885f1121da53410c244192",
+      "teleop_joint_schema": "f2f60ff4094885b8a2cc675a41c996eb0a53520d9095ac494f2eb2b3ed0c6fb6"
+    },
+    "urdf_sha256": "f6a36cec66febaf8e86093ef05f10696bac2d97e21b5d1aa5206a15ca428d877",
+    "cases": {
+      "reachable": {
+        "p50_ms": 8.600974999999998,
+        "p95_ms": 10.2705781,
+        "p99_ms": 10.90120851,
+        "max_ms": 11.654926,
+        "over_10ms": 36,
+        "frames": 600,
+        "mean_iterations": 5.991666666666666,
+        "direction_rms_rad": 0.003951892582067819,
+        "orientation_rms_rad": 0.010446072022274641,
+        "direction_max_rad": 0.01008327762523251,
+        "orientation_max_rad": 0.019615509982185177,
+        "maximum_constraint_violation_rad": 0.0,
+        "constraint_violations": {
+          "hard_limits": {
+            "maximum_rad": 0.0,
+            "frames": 0
+          },
+          "feedback_step": {
+            "maximum_rad": 0.0,
+            "frames": 0
+          },
+          "last_command_step": {
+            "maximum_rad": 0.0,
+            "frames": 0
+          },
+          "baseline_envelope": {
+            "maximum_rad": 0.0,
+            "frames": 0
+          },
+          "inactive_arm": {
+            "maximum_rad": 0.0,
+            "frames": 0
+          }
+        },
+        "all_commands_finite": true
+      },
+      "wrist_twist": {
+        "p50_ms": 8.497011,
+        "p95_ms": 9.540373749999999,
+        "p99_ms": 11.009229999999999,
+        "max_ms": 12.240072,
+        "over_10ms": 17,
+        "frames": 600,
+        "mean_iterations": 5.988333333333333,
+        "direction_rms_rad": 2.3928900534136826e-05,
+        "orientation_rms_rad": 0.008120069926454785,
+        "direction_max_rad": 3.90702337117343e-05,
+        "orientation_max_rad": 0.010957305863799994,
+        "maximum_constraint_violation_rad": 0.0,
+        "constraint_violations": {
+          "hard_limits": {
+            "maximum_rad": 0.0,
+            "frames": 0
+          },
+          "feedback_step": {
+            "maximum_rad": 0.0,
+            "frames": 0
+          },
+          "last_command_step": {
+            "maximum_rad": 0.0,
+            "frames": 0
+          },
+          "baseline_envelope": {
+            "maximum_rad": 0.0,
+            "frames": 0
+          },
+          "inactive_arm": {
+            "maximum_rad": 0.0,
+            "frames": 0
+          }
+        },
+        "all_commands_finite": true
+      },
+      "single_arm": {
+        "p50_ms": 6.126438,
+        "p95_ms": 7.384279899999999,
+        "p99_ms": 8.8038461,
+        "max_ms": 9.267228,
+        "over_10ms": 0,
+        "frames": 600,
+        "mean_iterations": 5.988333333333333,
+        "direction_rms_rad": 0.003192086692420945,
+        "orientation_rms_rad": 0.009152825989888844,
+        "direction_max_rad": 0.006902236054675593,
+        "orientation_max_rad": 0.015881840425490002,
+        "maximum_constraint_violation_rad": 0.0,
+        "constraint_violations": {
+          "hard_limits": {
+            "maximum_rad": 0.0,
+            "frames": 0
+          },
+          "feedback_step": {
+            "maximum_rad": 0.0,
+            "frames": 0
+          },
+          "last_command_step": {
+            "maximum_rad": 0.0,
+            "frames": 0
+          },
+          "baseline_envelope": {
+            "maximum_rad": 0.0,
+            "frames": 0
+          },
+          "inactive_arm": {
+            "maximum_rad": 0.0,
+            "frames": 0
+          }
+        },
+        "all_commands_finite": true
+      },
+      "unreachable": {
+        "p50_ms": 8.194629500000001,
+        "p95_ms": 8.78386005,
+        "p99_ms": 9.884029419999996,
+        "max_ms": 11.309408,
+        "over_10ms": 6,
+        "frames": 600,
+        "mean_iterations": 5.991666666666666,
+        "direction_rms_rad": 0.7745948960179307,
+        "orientation_rms_rad": 1.3208173567428632,
+        "direction_max_rad": 1.862288430411825,
+        "orientation_max_rad": 2.808270231359807,
+        "maximum_constraint_violation_rad": 0.0,
+        "constraint_violations": {
+          "hard_limits": {
+            "maximum_rad": 0.0,
+            "frames": 0
+          },
+          "feedback_step": {
+            "maximum_rad": 0.0,
+            "frames": 0
+          },
+          "last_command_step": {
+            "maximum_rad": 0.0,
+            "frames": 0
+          },
+          "baseline_envelope": {
+            "maximum_rad": 0.0,
+            "frames": 0
+          },
+          "inactive_arm": {
+            "maximum_rad": 0.0,
+            "frames": 0
+          }
+        },
+        "all_commands_finite": true
+      }
+    }
+  },
+  "after": {
+    "environment": {
+      "cpu": "Intel(R) Xeon(R) CPU E5-2690 v4 @ 2.60GHz",
+      "logical_cpus": 28,
+      "python": "3.12.16",
+      "platform": "Linux-7.0.0-42-generic-x86_64-with-glibc2.43",
+      "pinocchio": "3.6.0",
+      "numpy": "2.5.4",
+      "thread_environment": {
+        "OPENBLAS_NUM_THREADS": "1",
+        "OMP_NUM_THREADS": "1",
+        "MKL_NUM_THREADS": "1",
+        "BLIS_NUM_THREADS": "1"
+      }
+    },
+    "source_sha256": {
+      "teleop_ik_core": "42ca98bfd5f299ac80662e24b9874743a097d83a6357ec8d6a729fd23bbcbf18",
+      "teleop_skeleton_retarget": "34642a6b3f250509c0b21dd8d385e1004d94c5bc16d699c660f1e7cbaea1699e",
+      "teleop_direct_retarget": "918b88faf85dc5eff14b4e1e7ed2e61be826171bebd59648943bfc5ccb0c5cca",
+      "teleop_ik_types": "d7e6e617c9636a800a86bc09e6a8d3c677028fe40e885f1121da53410c244192",
+      "teleop_joint_schema": "f2f60ff4094885b8a2cc675a41c996eb0a53520d9095ac494f2eb2b3ed0c6fb6"
+    },
+    "urdf_sha256": "f6a36cec66febaf8e86093ef05f10696bac2d97e21b5d1aa5206a15ca428d877",
+    "cases": {
+      "reachable": {
+        "p50_ms": 4.810942,
+        "p95_ms": 6.25787495,
+        "p99_ms": 7.065229819999999,
+        "max_ms": 7.682029999999999,
+        "over_10ms": 0,
+        "frames": 600,
+        "mean_iterations": 5.991666666666666,
+        "direction_rms_rad": 0.003951892582077511,
+        "orientation_rms_rad": 0.010446072022274626,
+        "direction_max_rad": 0.01008327762525453,
+        "orientation_max_rad": 0.019615509982185215,
+        "maximum_constraint_violation_rad": 0.0,
+        "constraint_violations": {
+          "hard_limits": {
+            "maximum_rad": 0.0,
+            "frames": 0
+          },
+          "feedback_step": {
+            "maximum_rad": 0.0,
+            "frames": 0
+          },
+          "last_command_step": {
+            "maximum_rad": 0.0,
+            "frames": 0
+          },
+          "baseline_envelope": {
+            "maximum_rad": 0.0,
+            "frames": 0
+          },
+          "inactive_arm": {
+            "maximum_rad": 0.0,
+            "frames": 0
+          }
+        },
+        "all_commands_finite": true
+      },
+      "wrist_twist": {
+        "p50_ms": 4.367862499999999,
+        "p95_ms": 4.815099349999999,
+        "p99_ms": 5.24290142,
+        "max_ms": 5.369562999999999,
+        "over_10ms": 0,
+        "frames": 600,
+        "mean_iterations": 5.988333333333333,
+        "direction_rms_rad": 2.392890218122111e-05,
+        "orientation_rms_rad": 0.008120069926454782,
+        "direction_max_rad": 3.90702337117343e-05,
+        "orientation_max_rad": 0.010957305863800044,
+        "maximum_constraint_violation_rad": 0.0,
+        "constraint_violations": {
+          "hard_limits": {
+            "maximum_rad": 0.0,
+            "frames": 0
+          },
+          "feedback_step": {
+            "maximum_rad": 0.0,
+            "frames": 0
+          },
+          "last_command_step": {
+            "maximum_rad": 0.0,
+            "frames": 0
+          },
+          "baseline_envelope": {
+            "maximum_rad": 0.0,
+            "frames": 0
+          },
+          "inactive_arm": {
+            "maximum_rad": 0.0,
+            "frames": 0
+          }
+        },
+        "all_commands_finite": true
+      },
+      "single_arm": {
+        "p50_ms": 3.6690734999999997,
+        "p95_ms": 4.2503722999999995,
+        "p99_ms": 4.57086389,
+        "max_ms": 5.7962039999999995,
+        "over_10ms": 0,
+        "frames": 600,
+        "mean_iterations": 5.988333333333333,
+        "direction_rms_rad": 0.003192086692433495,
+        "orientation_rms_rad": 0.009152825989888841,
+        "direction_max_rad": 0.006902236054675593,
+        "orientation_max_rad": 0.015881840425489895,
+        "maximum_constraint_violation_rad": 0.0,
+        "constraint_violations": {
+          "hard_limits": {
+            "maximum_rad": 0.0,
+            "frames": 0
+          },
+          "feedback_step": {
+            "maximum_rad": 0.0,
+            "frames": 0
+          },
+          "last_command_step": {
+            "maximum_rad": 0.0,
+            "frames": 0
+          },
+          "baseline_envelope": {
+            "maximum_rad": 0.0,
+            "frames": 0
+          },
+          "inactive_arm": {
+            "maximum_rad": 0.0,
+            "frames": 0
+          }
+        },
+        "all_commands_finite": true
+      },
+      "unreachable": {
+        "p50_ms": 5.000907,
+        "p95_ms": 6.6814332499999995,
+        "p99_ms": 7.366119239999999,
+        "max_ms": 7.949058,
+        "over_10ms": 0,
+        "frames": 600,
+        "mean_iterations": 5.991666666666666,
+        "direction_rms_rad": 0.7745948960179275,
+        "orientation_rms_rad": 1.3208173567427728,
+        "direction_max_rad": 1.8622884304117062,
+        "orientation_max_rad": 2.808270231359808,
+        "maximum_constraint_violation_rad": 0.0,
+        "constraint_violations": {
+          "hard_limits": {
+            "maximum_rad": 0.0,
+            "frames": 0
+          },
+          "feedback_step": {
+            "maximum_rad": 0.0,
+            "frames": 0
+          },
+          "last_command_step": {
+            "maximum_rad": 0.0,
+            "frames": 0
+          },
+          "baseline_envelope": {
+            "maximum_rad": 0.0,
+            "frames": 0
+          },
+          "inactive_arm": {
+            "maximum_rad": 0.0,
+            "frames": 0
+          }
+        },
+        "all_commands_finite": true
+      }
+    }
+  },
+  "numerical_comparison": {
+    "reachable": {
+      "maximum_command_difference_rad": 1.4155343563970746e-15,
+      "direction_rms_difference_rad": 9.691900060282421e-15,
+      "orientation_rms_difference_rad": 1.5612511283791264e-17
+    },
+    "wrist_twist": {
+      "maximum_command_difference_rad": 8.471930364813314e-16,
+      "direction_rms_difference_rad": 1.6470842837410307e-12,
+      "orientation_rms_difference_rad": 3.469446951953614e-18
+    },
+    "single_arm": {
+      "maximum_command_difference_rad": 9.861902960928148e-16,
+      "direction_rms_difference_rad": 1.2549856986954211e-14,
+      "orientation_rms_difference_rad": 3.469446951953614e-18
+    },
+    "unreachable": {
+      "maximum_command_difference_rad": 9.842349157906938e-12,
+      "direction_rms_difference_rad": 3.219646771412954e-15,
+      "orientation_rms_difference_rad": 9.037215420448774e-14
+    }
+  }
+}
