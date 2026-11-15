@@ -50,6 +50,41 @@ class TeleopIKConfig:
     log_ik_result: bool = True
     log_every_n_frames: int = 1
 
+    def __post_init__(self) -> None:
+        if not self.joint_names or len(self.joint_names) != len(self.motor_ids):
+            raise ValueError("joint_names 和 motor_ids 必须包含相同数量的关节")
+        if isinstance(self.max_iterations, bool) or not isinstance(self.max_iterations, (int, np.integer)) or self.max_iterations < 1:
+            raise ValueError("max_iterations 必须为正整数")
+        nonnegative_fields = (
+            "damping", "position_weight", "orientation_weight", "max_position_error",
+            "max_orientation_error", "max_joint_delta_per_step", "nullspace_gain",
+            "stabilized_joint_gain",
+        )
+        for name in nonnegative_fields:
+            value = float(getattr(self, name))
+            if not np.isfinite(value) or value < 0.0:
+                raise ValueError(f"{name} 必须为有限非负数")
+        for name in ("control_dt", "position_convergence_threshold"):
+            value = float(getattr(self, name))
+            if not np.isfinite(value) or value <= 0.0:
+                raise ValueError(f"{name} 必须为有限正数")
+        if not np.isfinite(self.smoothing_alpha) or not 0.0 <= self.smoothing_alpha <= 1.0:
+            raise ValueError("smoothing_alpha 必须为 [0, 1] 内的有限数")
+        if self.stabilized_joint_gain > 1.0:
+            raise ValueError("stabilized_joint_gain 必须位于 [0, 1]")
+        for indices in (self.stabilized_joint_indices, self.locked_joint_indices):
+            if any(not isinstance(index, (int, np.integer)) or index < 0 or index >= len(self.joint_names) for index in indices):
+                raise ValueError("关节约束索引超出 joint_names 范围")
+        for values in (self.stabilized_joint_max_delta, self.stabilized_joint_max_deltas):
+            if values is not None:
+                deltas = np.asarray(values, dtype=float)
+                if not np.all(np.isfinite(deltas)) or np.any(deltas < 0.0):
+                    raise ValueError("稳定关节偏移必须为有限非负数")
+        if self.stabilized_joint_delta_bounds is not None:
+            bounds = np.asarray(self.stabilized_joint_delta_bounds, dtype=float)
+            if bounds.shape != (len(self.stabilized_joint_indices), 2) or not np.all(np.isfinite(bounds)) or np.any(bounds[:, 0] > bounds[:, 1]):
+                raise ValueError("稳定关节偏移上下界非法")
+
 
 @dataclass(frozen=True)
 class TeleopIKInput:

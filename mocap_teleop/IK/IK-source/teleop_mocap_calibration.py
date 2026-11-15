@@ -35,17 +35,12 @@ def load_workspace_calibration(
     control_side: str = "both",
     optional: bool = False,
 ) -> WorkspaceCalibration | None:
+    """Allow an omitted optional calibration, while validating every supplied file."""
     if path in (None, ""):
         if optional:
             print("CALIBRATION_INFO workspace 标定未配置，使用默认相对映射")
             return None
         raise ValueError("未提供工作空间标定文件")
-    if optional:
-        try:
-            return _load_workspace_calibration_strict(path, control_side)
-        except (ValueError, FileNotFoundError, OSError, json.JSONDecodeError) as exc:
-            print(f"CALIBRATION_WARN 工作空间标定不可用，使用默认相对映射: {Path(path).expanduser().resolve()} ({exc})")
-            return None
     return _load_workspace_calibration_strict(path, control_side)
 
 

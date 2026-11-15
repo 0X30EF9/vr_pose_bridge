@@ -8,6 +8,7 @@ import numpy as np
 import pinocchio as pin
 
 from teleop_ik_types import IKCommand, TeleopIKConfig, TeleopIKInput, TeleopIKResult
+from teleop_ik_core import clip_to_limits, ensure_pose, resolve_joint_limits
 
 SOURCE_DIR = Path(__file__).resolve().parent
 OFFICIAL_PACKAGE_ROOT = (
@@ -138,23 +139,7 @@ class OfficialTiangong2ProIK:
         return target @ solver_to_tcp.inverse().homogeneous
 
     def _resolve_limits(self) -> list[tuple[float, float]]:
-        if self.config.joint_limits is not None:
-            if len(self.config.joint_limits) != self.model.nq:
-                raise ValueError(
-                    f"joint_limits 维度错误: got {len(self.config.joint_limits)}, expected {self.model.nq}"
-                )
-            limits = [(float(lower), float(upper)) for lower, upper in self.config.joint_limits]
-            if any(lower >= upper for lower, upper in limits):
-                raise ValueError("joint_limits 上下界非法")
-            return limits
-
-        lower = np.asarray(self.model.lowerPositionLimit, dtype=float).reshape(-1)
-        upper = np.asarray(self.model.upperPositionLimit, dtype=float).reshape(-1)
-        if lower.shape != (self.model.nq,) or upper.shape != (self.model.nq,):
-            raise ValueError("官方 URDF 关节限位维度与模型不一致")
-        if not np.all(np.isfinite(lower)) or not np.all(np.isfinite(upper)) or not np.all(lower < upper):
-            raise ValueError("官方 URDF 关节限位非法")
-        return [(float(item_lower), float(item_upper)) for item_lower, item_upper in zip(lower, upper)]
+        return resolve_joint_limits(self.model, self.config.joint_limits)
 
     @staticmethod
     def _ensure_arm_q(values: np.ndarray, name: str) -> np.ndarray:
@@ -177,7 +162,7 @@ class OfficialTiangong2ProIK:
 
     def set_home_q(self, home_q: np.ndarray) -> None:
         arm_q = self._ensure_arm_q(home_q, "home_q")
-        self.home_q = self._full_q(arm_q)
+        self.home_q = self._clip_full_q(self._full_q(arm_q))
         self.reference_q = self.home_q.copy()
         self.solver.init_data = self.home_q.copy()
 
@@ -237,8 +222,8 @@ class OfficialTiangong2ProIK:
         current_waist = float(np.clip(current_waist, *self.waist_limit))
         self.last_waist_position = current_waist
 
-        q = self._full_q(current_arm_q, current_waist)
-        command_ref = self._full_q(command_arm_q, current_waist)
+        q = self._clip_full_q(self._full_q(current_arm_q, current_waist))
+        command_ref = self._clip_full_q(self._full_q(command_arm_q, current_waist))
         q = self._lock_configured_joints(q, ik_input.control_side)
         command_ref = self._lock_configured_joints(command_ref, ik_input.control_side)
         limited = False
@@ -287,7 +272,7 @@ class OfficialTiangong2ProIK:
         limited = limited or command_limited
         locked_q = self._lock_configured_joints(q, ik_input.control_side)
         limited = limited or not np.allclose(locked_q, q, atol=1e-8)
-        q = locked_q
+        q = self._clip_full_q(locked_q)
         q[self.joint_indices[WAIST_JOINT_NAME]] = current_waist
 
         position_error_by_side = self._position_residuals(q, ik_input)
@@ -469,9 +454,7 @@ class OfficialTiangong2ProIK:
         return increment
 
     def _clip_full_q(self, q: np.ndarray) -> np.ndarray:
-        lower = np.asarray([item[0] for item in self.full_joint_limits], dtype=float)
-        upper = np.asarray([item[1] for item in self.full_joint_limits], dtype=float)
-        return np.clip(np.asarray(q, dtype=float), lower, upper)
+        return clip_to_limits(q, self.full_joint_limits)
 
     def _mask_full_control_side(self, dq: np.ndarray, control_side: str) -> np.ndarray:
         masked = np.asarray(dq, dtype=float).copy()
@@ -513,17 +496,21 @@ class OfficialTiangong2ProIK:
         if not np.isfinite(current_waist):
             raise ValueError("current_waist_position 包含 NaN/Inf")
         current_waist = float(np.clip(current_waist, *self.waist_limit))
-        initial_q = self._full_q(seed_arm_q, current_waist)
+        raw_initial_q = self._full_q(seed_arm_q, current_waist)
+        initial_q = self._clip_full_q(raw_initial_q)
+        limited = not np.allclose(initial_q, raw_initial_q, atol=1e-8)
         self.last_waist_position = current_waist
+        target_pose_l = ensure_pose(ik_input.target_pose_l, "target_pose_l")
+        target_pose_r = ensure_pose(ik_input.target_pose_r, "target_pose_r")
 
         reason = "ok"
         try:
             left_solver_target = self._tcp_target_to_solver_target(
-                ik_input.target_pose_l,
+                target_pose_l,
                 self.left_solver_to_tcp,
             )
             right_solver_target = self._tcp_target_to_solver_target(
-                ik_input.target_pose_r,
+                target_pose_r,
                 self.right_solver_to_tcp,
             )
             sol_full_q = self.solver.solve_ik(
@@ -538,11 +525,9 @@ class OfficialTiangong2ProIK:
             sol_full_q = np.asarray(sol_full_q, dtype=float).reshape(-1)
             if sol_full_q.shape != (self.model.nq,) or not np.all(np.isfinite(sol_full_q)):
                 raise ValueError(f"官方求解器输出维度或数值非法: {sol_full_q.shape}")
-            sol_full_q = np.clip(
-                sol_full_q,
-                np.asarray([item[0] for item in self.full_joint_limits]),
-                np.asarray([item[1] for item in self.full_joint_limits]),
-            )
+            bounded_q = self._clip_full_q(sol_full_q)
+            limited = limited or not np.allclose(bounded_q, sol_full_q, atol=1e-8)
+            sol_full_q = bounded_q
             solver_status = getattr(self.solver, "last_return_status", "unknown")
             if solver_status == "exception":
                 solver_exception = getattr(self.solver, "last_solver_exception", "unknown error")
@@ -591,6 +576,7 @@ class OfficialTiangong2ProIK:
                 "warm_start_source": "robot_feedback" if ik_input.last_q_cmd is None else "last_safe_command",
                 "solver_exception": getattr(self.solver, "last_solver_exception", None),
                 "reason": reason,
+                "limited": limited,
                 "cost_ms": (time.perf_counter() - solve_start) * 1000.0,
                 "frame_index": self.solve_frame_index,
             },
@@ -604,7 +590,7 @@ class OfficialTiangong2ProIK:
             ),
             error_norm=error_norm,
             iteration_count=self.solver.last_iteration_count,
-            limited=False,
+            limited=limited,
             reason=reason,
         )
 

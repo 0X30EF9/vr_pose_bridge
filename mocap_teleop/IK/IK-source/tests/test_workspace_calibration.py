@@ -61,6 +61,39 @@ class WorkspaceCalibrationTest(unittest.TestCase):
         path.write_text(json.dumps(payload or calibration_payload()), encoding="utf-8")
         return path
 
+    def test_optional_calibration_only_allows_an_omitted_path(self) -> None:
+        self.assertIsNone(load_workspace_calibration(None, optional=True))
+        self.assertIsNone(load_workspace_calibration("", optional=True))
+        with self.assertRaisesRegex(ValueError, "未提供"):
+            load_workspace_calibration(None)
+
+    def test_explicit_missing_path_is_rejected_even_when_optional(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(FileNotFoundError):
+                load_workspace_calibration(Path(tmp) / "missing.json", optional=True)
+
+    def test_explicit_invalid_files_are_rejected_even_when_optional(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for field, value in (("valid", False), ("schema_version", 0), ("control_frame", "L_ee_R_ee")):
+                with self.subTest(field=field):
+                    payload = calibration_payload()
+                    payload[field] = value
+                    with self.assertRaises(ValueError):
+                        load_workspace_calibration(self.write_calibration(root, payload), optional=True)
+            invalid_json = root / "invalid.json"
+            invalid_json.write_text("{", encoding="utf-8")
+            with self.assertRaises(json.JSONDecodeError):
+                load_workspace_calibration(invalid_json, optional=True)
+
+    def test_explicit_valid_optional_calibration_keeps_its_mapping(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            calibration = load_workspace_calibration(self.write_calibration(Path(tmp)), optional=True)
+            self.assertIsNotNone(calibration)
+            mapped, projected = map_workspace_delta(np.array([0.05, 0.0, 0.0]), "left", calibration, 1.0)
+            np.testing.assert_allclose(mapped, [0.1, 0.0, 0.0])
+            self.assertFalse(projected)
+
     def test_invalid_calibration_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             payload = calibration_payload()

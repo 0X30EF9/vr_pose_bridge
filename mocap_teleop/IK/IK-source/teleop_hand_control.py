@@ -53,7 +53,7 @@ class HandControlConfig:
     right: tuple[HandChannelCalibration, ...]
 
     def __post_init__(self) -> None:
-        if self.state_timeout_s <= 0:
+        if not math.isfinite(self.state_timeout_s) or self.state_timeout_s <= 0:
             raise HandControlError("手部状态超时必须大于 0")
         if not 0 < self.max_step <= 1:
             raise HandControlError("手部单帧最大变化必须在 (0, 1] 内")
